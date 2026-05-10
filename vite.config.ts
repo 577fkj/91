@@ -10,11 +10,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    host: "0.0.0.0",
+    port: 9191,
     proxy: {
-      "/api": "http://localhost:8080",
-      "/p": "http://localhost:8080",
-      "/admin/api": "http://localhost:8080",
+      "/api": "http://127.0.0.1:9192",
+      "/p": "http://127.0.0.1:9192",
+      "/admin/api": "http://127.0.0.1:9192",
     },
   },
 });

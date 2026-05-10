@@ -21,6 +21,7 @@ import (
 	"github.com/video-site/backend/internal/config"
 	"github.com/video-site/backend/internal/drives"
 	"github.com/video-site/backend/internal/drives/p115"
+	"github.com/video-site/backend/internal/drives/pikpak"
 	"github.com/video-site/backend/internal/drives/quark"
 	"github.com/video-site/backend/internal/drives/wopan"
 	"github.com/video-site/backend/internal/preview"
@@ -52,10 +53,11 @@ func main() {
 	defer cat.Close()
 
 	app := &App{
-		cfg:      cfg,
-		cat:      cat,
-		registry: proxy.NewRegistry(),
-		workers:  make(map[string]*preview.Worker),
+		cfg:          cfg,
+		cat:          cat,
+		registry:     proxy.NewRegistry(),
+		workers:      make(map[string]*preview.Worker),
+		thumbWorkers: make(map[string]*preview.ThumbWorker),
 	}
 	app.proxy = proxy.New(app.registry)
 
@@ -82,9 +84,10 @@ func main() {
 	}
 
 	apiServer := &api.Server{
-		Catalog:  cat,
-		Proxy:    app.proxy,
-		LocalDir: cfg.Storage.LocalPreviewDir,
+		Catalog:    cat,
+		Proxy:      app.proxy,
+		LocalDir:   cfg.Storage.LocalPreviewDir,
+		FFmpegPath: cfg.Preview.FFmpegPath,
 	}
 
 	adminServer := &api.AdminServer{
@@ -152,9 +155,10 @@ type App struct {
 	registry *proxy.Registry
 	proxy    *proxy.Proxy
 
-	mu      sync.Mutex
-	workers map[string]*preview.Worker
-	cancels map[string]context.CancelFunc
+	mu           sync.Mutex
+	workers      map[string]*preview.Worker
+	thumbWorkers map[string]*preview.ThumbWorker
+	cancels      map[string]context.CancelFunc
 
 	// 运行时 preview 开关（从 DB 读）
 	previewEnabled bool
@@ -235,6 +239,26 @@ func (a *App) attachDrive(ctx context.Context, d *catalog.Drive) error {
 			Cookie: d.Credentials["cookie"],
 			RootID: d.RootID,
 		})
+	case "pikpak":
+		drv = pikpak.New(pikpak.Config{
+			ID:               d.ID,
+			Username:         d.Credentials["username"],
+			Password:         d.Credentials["password"],
+			Platform:         d.Credentials["platform"],
+			RefreshToken:     d.Credentials["refresh_token"],
+			AccessToken:      d.Credentials["access_token"],
+			CaptchaToken:     d.Credentials["captcha_token"],
+			DeviceID:         d.Credentials["device_id"],
+			RootID:           d.RootID,
+			DisableMediaLink: pikpak.ParseBoolDefault(d.Credentials["disable_media_link"], true),
+			OnTokenUpdate: func(access, refresh, captcha, deviceID string) {
+				d.Credentials["access_token"] = access
+				d.Credentials["refresh_token"] = refresh
+				d.Credentials["captcha_token"] = captcha
+				d.Credentials["device_id"] = deviceID
+				_ = a.cat.UpsertDrive(ctx, d)
+			},
+		})
 	case "wopan":
 		drv = wopan.New(wopan.Config{
 			ID:           d.ID,
@@ -276,9 +300,11 @@ func (a *App) attachDrive(ctx context.Context, d *catalog.Drive) error {
 		RemoteDir:       a.cfg.Preview.RemoteDir,
 	})
 	worker := preview.NewWorker(gen, a.cat, drv, a.cfg.Preview.RemoteDir)
+	thumbWorker := preview.NewThumbWorker(gen, a.cat, drv)
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	go worker.Run(workerCtx)
+	go thumbWorker.Run(workerCtx)
 
 	a.mu.Lock()
 	if a.cancels == nil {
@@ -288,14 +314,10 @@ func (a *App) attachDrive(ctx context.Context, d *catalog.Drive) error {
 		old()
 	}
 	a.workers[d.ID] = worker
+	a.thumbWorkers[d.ID] = thumbWorker
 	a.cancels[d.ID] = cancel
 	a.mu.Unlock()
 
-	// 启动补扫：把这个盘下所有 pending 的视频塞进 worker 队列
-	// 使用 goroutine 因为队列可能比预期的小，Enqueue 直接丢弃，调用方也无需等待
-	if a.PreviewEnabled() {
-		go a.enqueuePending(workerCtx, d.ID, worker)
-	}
 	return nil
 }
 
@@ -314,6 +336,21 @@ func (a *App) enqueuePending(ctx context.Context, driveID string, w *preview.Wor
 	}
 }
 
+func (a *App) enqueueThumbnails(ctx context.Context, driveID string, w *preview.ThumbWorker) {
+	pending, err := a.cat.ListVideosNeedingThumbnail(ctx, driveID, 0)
+	if err != nil {
+		log.Printf("[thumb] list pending %s: %v", driveID, err)
+		return
+	}
+	if len(pending) == 0 {
+		return
+	}
+	log.Printf("[thumb] enqueue %d missing thumbnails for drive=%s", len(pending), driveID)
+	for _, v := range pending {
+		w.Enqueue(v)
+	}
+}
+
 func (a *App) detachDrive(id string) {
 	a.registry.Remove(id)
 	a.mu.Lock()
@@ -322,6 +359,7 @@ func (a *App) detachDrive(id string) {
 		delete(a.cancels, id)
 	}
 	delete(a.workers, id)
+	delete(a.thumbWorkers, id)
 	a.mu.Unlock()
 }
 
@@ -334,11 +372,19 @@ func (a *App) runScan(ctx context.Context, driveID string) {
 
 	a.mu.Lock()
 	worker := a.workers[driveID]
+	thumbWorker := a.thumbWorkers[driveID]
 	a.mu.Unlock()
 
 	var onNew func(v *catalog.Video)
-	if a.PreviewEnabled() && worker != nil {
-		onNew = worker.Enqueue
+	if thumbWorker != nil || (a.PreviewEnabled() && worker != nil) {
+		onNew = func(v *catalog.Video) {
+			if thumbWorker != nil && v.ThumbnailURL == "" {
+				thumbWorker.Enqueue(v)
+			}
+			if a.PreviewEnabled() && worker != nil {
+				worker.Enqueue(v)
+			}
+		}
 	}
 
 	sc := scanner.New(a.cat, drv, a.cfg.Scanner.VideoExtensions, a.cfg.Scanner.MaxDepth, onNew)
@@ -361,6 +407,12 @@ func (a *App) runScan(ctx context.Context, driveID string) {
 		return
 	}
 	log.Printf("[scan] drive=%s done scanned=%d added=%d", driveID, stats.Scanned, stats.Added)
+	if thumbWorker != nil {
+		a.enqueueThumbnails(ctx, driveID, thumbWorker)
+	}
+	if a.PreviewEnabled() && worker != nil {
+		go a.enqueuePending(ctx, driveID, worker)
+	}
 }
 
 func (a *App) regenPreview(ctx context.Context, videoID string) {

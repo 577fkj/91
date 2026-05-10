@@ -4,6 +4,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/video-site/backend/internal/fixedtags"
 )
 
 // ParsedName 从文件名里解析出的视频元数据
@@ -26,16 +28,6 @@ func Parse(filename string) ParsedName {
 	var out ParsedName
 
 	if m := reTags.FindStringSubmatch(name); m != nil {
-		raw := m[1]
-		parts := strings.FieldsFunc(raw, func(r rune) bool {
-			return r == ',' || r == '，' || r == '、' || r == ' '
-		})
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				out.Tags = append(out.Tags, p)
-			}
-		}
 		name = strings.TrimSpace(name[len(m[0]):])
 	}
 
@@ -45,5 +37,6 @@ func Parse(filename string) ParsedName {
 	}
 
 	out.Title = strings.TrimSpace(name)
+	out.Tags = fixedtags.MatchFilename(filename)
 	return out
 }

@@ -152,6 +152,8 @@ type VideoMetaPatch struct {
 	ThumbnailURL    string
 	DurationSeconds int
 	Category        string
+	Tags            []string
+	TagsSet         bool
 }
 
 func (c *Catalog) UpdateVideoMeta(ctx context.Context, id string, p VideoMetaPatch) error {
@@ -168,6 +170,11 @@ func (c *Catalog) UpdateVideoMeta(ctx context.Context, id string, p VideoMetaPat
 	if p.Category != "" {
 		parts = append(parts, "category = ?")
 		args = append(args, p.Category)
+	}
+	if p.TagsSet {
+		tagsJSON, _ := json.Marshal(p.Tags)
+		parts = append(parts, "tags = ?")
+		args = append(args, string(tagsJSON))
 	}
 	if len(parts) == 0 {
 		return nil
@@ -208,6 +215,26 @@ func (c *Catalog) ListCategories(ctx context.Context) ([]CategoryStat, error) {
 	return out, nil
 }
 
+type TagStat struct {
+	Label string
+	Count int
+}
+
+func (c *Catalog) CountTags(ctx context.Context, labels []string) ([]TagStat, error) {
+	out := make([]TagStat, 0, len(labels))
+	for _, label := range labels {
+		var count int
+		if err := c.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM videos WHERE tags LIKE ?`,
+			"%\""+label+"\"%",
+		).Scan(&count); err != nil {
+			return nil, err
+		}
+		out = append(out, TagStat{Label: label, Count: count})
+	}
+	return out, nil
+}
+
 // ListVideosByPreviewStatus 按预览状态列出全部视频，通常用于启动补扫
 func (c *Catalog) ListVideosByPreviewStatus(ctx context.Context, driveID, status string, limit int) ([]*Video, error) {
 	if limit <= 0 {
@@ -216,6 +243,33 @@ func (c *Catalog) ListVideosByPreviewStatus(ctx context.Context, driveID, status
 	rows, err := c.db.QueryContext(ctx,
 		`SELECT `+allVideoCols+` FROM videos WHERE drive_id = ? AND preview_status = ? ORDER BY created_at ASC LIMIT ?`,
 		driveID, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Video
+	for rows.Next() {
+		v, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// ListVideosNeedingThumbnail returns videos that do not have any cover URL yet.
+func (c *Catalog) ListVideosNeedingThumbnail(ctx context.Context, driveID string, limit int) ([]*Video, error) {
+	if limit <= 0 {
+		limit = 10000
+	}
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT `+allVideoCols+` FROM videos
+		 WHERE drive_id = ?
+		   AND COALESCE(thumbnail_url, '') = ''
+		 ORDER BY created_at ASC
+		 LIMIT ?`,
+		driveID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +299,8 @@ type ListParams struct {
 	PageSize int
 }
 
-func (c *Catalog) ListVideos(ctx context.Context, p ListParams) ([]*Video, int, error) {	if p.PageSize <= 0 {
+func (c *Catalog) ListVideos(ctx context.Context, p ListParams) ([]*Video, int, error) {
+	if p.PageSize <= 0 {
 		p.PageSize = 24
 	}
 	if p.Page <= 0 {

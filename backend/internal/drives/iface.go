@@ -10,7 +10,7 @@ import (
 
 // Drive 是三家网盘统一抽象。上层不区分盘，只区分 Kind。
 type Drive interface {
-	// Kind 返回驱动代号："quark" / "p115" / "wopan"
+	// Kind 返回驱动代号："quark" / "p115" / "pikpak" / "wopan"
 	Kind() string
 
 	// ID 返回该盘在 catalog 中的唯一标识
@@ -51,7 +51,8 @@ type Entry struct {
 	ModTime  time.Time
 
 	// 部分网盘额外信息
-	Category int // 1=视频 (quark)
+	Category     int    // 1=视频 (quark)
+	ThumbnailURL string // 网盘侧已提供的快速缩略图
 }
 
 type StreamLink struct {

@@ -32,6 +32,18 @@
   display: block;
 }
 
+.video-player__status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 14px;
+  text-align: center;
+}
+
 .video-stats {
   display: flex;
   flex-wrap: wrap;

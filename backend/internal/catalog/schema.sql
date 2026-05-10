@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_views ON videos(views DESC);
 -- 网盘账户
 CREATE TABLE IF NOT EXISTS drives (
     id            TEXT PRIMARY KEY,
-    kind          TEXT NOT NULL,                -- quark / p115 / wopan
+    kind          TEXT NOT NULL,                -- quark / p115 / pikpak / wopan
     name          TEXT NOT NULL,
     root_id       TEXT NOT NULL DEFAULT '0',
     scan_root_id  TEXT,                          -- 扫描起点（默认 root_id）

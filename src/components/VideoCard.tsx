@@ -24,9 +24,11 @@ export function VideoCard({ video }: Props) {
   const [previewState, setPreviewState] = useState<PreviewState>("idle");
   const [shouldRenderPreview, setShouldRenderPreview] = useState(false);
   const [progress, setProgress] = useState(0); // 0~1
+  const [thumbnailRetry, setThumbnailRetry] = useState(0);
 
   const rootRef = useRef<HTMLElement | null>(null);
   const hoverTimerRef = useRef<number | null>(null);
+  const thumbnailRetryTimerRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const activeId = useActivePreviewId();
@@ -50,9 +52,22 @@ export function VideoCard({ video }: Props) {
 
   // 卸载时清理
   useEffect(() => {
-    return () => cleanup();
+    return () => {
+      cleanup();
+      if (thumbnailRetryTimerRef.current) {
+        window.clearTimeout(thumbnailRetryTimerRef.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    setThumbnailRetry(0);
+    if (thumbnailRetryTimerRef.current) {
+      window.clearTimeout(thumbnailRetryTimerRef.current);
+      thumbnailRetryTimerRef.current = null;
+    }
+  }, [video.id, video.thumbnail]);
 
   function cleanup() {
     if (hoverTimerRef.current) {
@@ -79,6 +94,21 @@ export function VideoCard({ video }: Props) {
       previewController.setActiveId(null);
     }
   }
+
+  function handleThumbnailError() {
+    if (!video.thumbnail.startsWith("/p/thumb/")) return;
+    if (thumbnailRetry >= 8 || thumbnailRetryTimerRef.current) return;
+
+    thumbnailRetryTimerRef.current = window.setTimeout(() => {
+      thumbnailRetryTimerRef.current = null;
+      setThumbnailRetry((n) => n + 1);
+    }, Math.min(1000 + thumbnailRetry * 750, 5000));
+  }
+
+  const thumbnailSrc =
+    thumbnailRetry === 0
+      ? video.thumbnail
+      : withRetryParam(video.thumbnail, thumbnailRetry);
 
   function startPreviewIntent() {
     if (!inView) return;
@@ -113,9 +143,10 @@ export function VideoCard({ video }: Props) {
         <div className="thumb-frame">
           <img
             className="thumb-image"
-            src={video.thumbnail}
+            src={thumbnailSrc}
             alt={video.title}
             loading="lazy"
+            onError={handleThumbnailError}
           />
 
           {shouldRenderPreview && (
@@ -179,4 +210,9 @@ export function VideoCard({ video }: Props) {
       </Link>
     </article>
   );
+}
+
+function withRetryParam(src: string, retry: number): string {
+  const sep = src.includes("?") ? "&" : "?";
+  return `${src}${sep}r=${retry}`;
 }

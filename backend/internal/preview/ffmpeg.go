@@ -20,7 +20,7 @@ import (
 type Config struct {
 	FFmpegPath      string
 	FFprobePath     string
-	DurationSeconds int    // 单段时长（秒），用于单段 fallback；拼接模式下每段 = DurationSeconds / 段数
+	DurationSeconds int // 单段时长（秒），用于单段 fallback；拼接模式下每段 = DurationSeconds / 段数
 	Width           int
 	Segments        int    // teaser 段数，1=单段，推荐 3
 	LocalDir        string // 本地兜底
@@ -29,6 +29,17 @@ type Config struct {
 
 type Generator struct {
 	cfg Config
+}
+
+type ThumbnailGenerator interface {
+	Probe(ctx context.Context, link *drives.StreamLink) (float64, error)
+	GenerateThumbnail(ctx context.Context, link *drives.StreamLink, videoID string, duration float64) (string, error)
+}
+
+type TeaserGenerator interface {
+	Probe(ctx context.Context, link *drives.StreamLink) (float64, error)
+	Generate(ctx context.Context, link *drives.StreamLink, duration float64) (string, error)
+	MoveToLocal(tmpPath, videoID string) (string, error)
 }
 
 func New(cfg Config) *Generator {
@@ -362,14 +373,14 @@ func copyFile(src, dst string) error {
 // --- Worker ---
 
 type Worker struct {
-	Gen       *Generator
+	Gen       TeaserGenerator
 	Catalog   *catalog.Catalog
 	Drive     drives.Drive
 	RemoteDir string
 	ch        chan *catalog.Video
 }
 
-func NewWorker(gen *Generator, cat *catalog.Catalog, drv drives.Drive, remoteDir string) *Worker {
+func NewWorker(gen TeaserGenerator, cat *catalog.Catalog, drv drives.Drive, remoteDir string) *Worker {
 	return &Worker{
 		Gen:       gen,
 		Catalog:   cat,
@@ -380,6 +391,29 @@ func NewWorker(gen *Generator, cat *catalog.Catalog, drv drives.Drive, remoteDir
 }
 
 func (w *Worker) Enqueue(v *catalog.Video) {
+	select {
+	case w.ch <- v:
+	default:
+	}
+}
+
+type ThumbWorker struct {
+	Gen     ThumbnailGenerator
+	Catalog *catalog.Catalog
+	Drive   drives.Drive
+	ch      chan *catalog.Video
+}
+
+func NewThumbWorker(gen ThumbnailGenerator, cat *catalog.Catalog, drv drives.Drive) *ThumbWorker {
+	return &ThumbWorker{
+		Gen:     gen,
+		Catalog: cat,
+		Drive:   drv,
+		ch:      make(chan *catalog.Video, 4096),
+	}
+}
+
+func (w *ThumbWorker) Enqueue(v *catalog.Video) {
 	select {
 	case w.ch <- v:
 	default:
@@ -403,6 +437,50 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// Run 阻塞运行直到 ctx 取消
+func (w *ThumbWorker) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case v := <-w.ch:
+			w.process(ctx, v)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+}
+
+func (w *ThumbWorker) process(ctx context.Context, v *catalog.Video) {
+	link, err := w.Drive.StreamURL(ctx, v.FileID)
+	if err != nil {
+		log.Printf("[thumb] streamURL %s: %v", v.Title, err)
+		return
+	}
+
+	duration := float64(v.DurationSeconds)
+	if duration <= 0 {
+		if dur, err := w.Gen.Probe(ctx, link); err == nil && dur > 0 {
+			duration = dur
+			_ = w.Catalog.UpdateVideoMeta(ctx, v.ID, catalog.VideoMetaPatch{
+				DurationSeconds: int(dur),
+			})
+		}
+	}
+
+	if _, err := w.Gen.GenerateThumbnail(ctx, link, v.ID, duration); err != nil {
+		log.Printf("[thumb] generate %s: %v", v.Title, err)
+		return
+	}
+	_ = w.Catalog.UpdateVideoMeta(ctx, v.ID, catalog.VideoMetaPatch{
+		ThumbnailURL: "/p/thumb/" + v.ID,
+	})
+	log.Printf("[thumb] ready %s", v.Title)
+}
+
 func (w *Worker) process(ctx context.Context, v *catalog.Video) {
 	link, err := w.Drive.StreamURL(ctx, v.FileID)
 	if err != nil {
@@ -422,16 +500,7 @@ func (w *Worker) process(ctx context.Context, v *catalog.Video) {
 		}
 	}
 
-	// 2) 封面（独立时间点，失败不致命）
-	if _, err := w.Gen.GenerateThumbnail(ctx, link, v.ID, duration); err != nil {
-		log.Printf("[preview] thumbnail %s: %v", v.Title, err)
-	} else {
-		_ = w.Catalog.UpdateVideoMeta(ctx, v.ID, catalog.VideoMetaPatch{
-			ThumbnailURL: "/p/thumb/" + v.ID,
-		})
-	}
-
-	// 3) teaser
+	// 2) teaser
 	tmp, err := w.Gen.Generate(ctx, link, duration)
 	if err != nil {
 		log.Printf("[preview] generate %s: %v", v.Title, err)

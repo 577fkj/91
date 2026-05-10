@@ -1,10 +1,10 @@
 # 视频聚合站
 
-把夸克 / 115 / 联通沃盘作为存储后端的视频聚合前台。按 `video-site-implementation-plan.md` 的设计实现。
+把夸克 / 115 / PikPak / 联通沃盘作为存储后端的视频聚合前台。按 `video-site-implementation-plan.md` 的设计实现。
 
 - 前端：React 18 + Vite + TypeScript
 - 后端：Go 1.23，SQLite（纯 Go 驱动，无 CGO），ffmpeg 生成 teaser 和封面
-- 三家网盘接入：夸克自研 + 115driver SDK + wopan-sdk-go SDK
+- 网盘接入：夸克自研 + 115driver SDK + PikPak 自研（参考 OpenList）+ wopan-sdk-go SDK
 
 ## 快速开始
 
@@ -70,17 +70,18 @@ git add vendor/      # 入库
 ## 加一个网盘
 
 1. 登录 `/admin` → 网盘管理 → 新建
-2. 选类型（夸克 / 115 / 沃盘），填名称 + 凭证
+2. 选类型（夸克 / 115 / PikPak / 沃盘），填名称 + 凭证
 3. 保存后会自动触发一次扫描
 4. 在 `/admin/videos` 里看扫到了多少视频
 5. 侧栏底部 **Teaser 生成** 开关开着，就会按配置给每个视频生成封面和 10 秒 teaser
 
-三家盘的凭证字段：
+各网盘的凭证字段：
 
 | 类型 | 凭证字段 | 获取方式 |
 |---|---|---|
 | 夸克 | `cookie` | pan.quark.cn 登录后 F12 拷 Cookie |
 | 115 | `cookie` | 115.com 登录后拷 Cookie（`UID=...; CID=...; SEID=...; KID=...`） |
+| PikPak | `username`、`password`，可选 `refresh_token`、`captcha_token`、`device_id`、`platform`、`disable_media_link` | 参考 OpenList PikPak driver；首次登录成功会自动回写 token |
 | 沃盘 | `access_token`、`refresh_token`、可选 `family_id` | 第一版只能手动粘贴 token；后续会加扫码/短信登录 |
 
 ## Teaser 和封面生成策略

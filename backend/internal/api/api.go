@@ -1,25 +1,34 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/video-site/backend/internal/auth"
 	"github.com/video-site/backend/internal/catalog"
+	"github.com/video-site/backend/internal/fixedtags"
 	"github.com/video-site/backend/internal/proxy"
 )
 
 type Server struct {
-	Catalog  *catalog.Catalog
-	Proxy    *proxy.Proxy
-	LocalDir string
+	Catalog    *catalog.Catalog
+	Proxy      *proxy.Proxy
+	LocalDir   string
+	FFmpegPath string
+
+	transcodeMu   sync.Mutex
+	transcodeJobs map[string]bool
 }
 
 // VideoDTO 是返回给前端的视频对象，字段名跟前端 VideoItem 对齐
@@ -47,20 +56,20 @@ type VideoDTO struct {
 
 type VideoDetailDTO struct {
 	VideoDTO
-	VideoSrc        string        `json:"videoSrc"`
-	Poster          string        `json:"poster"`
-	Description     string        `json:"description"`
-	EmbedURL        string        `json:"embedUrl"`
-	Points          int           `json:"points,omitempty"`
-	AuthorProfile   AuthorProfile `json:"authorProfile"`
-	RelatedVideos   []VideoDTO    `json:"relatedVideos"`
-	CommentsList    []Comment     `json:"commentsList"`
+	VideoSrc      string        `json:"videoSrc"`
+	Poster        string        `json:"poster"`
+	Description   string        `json:"description"`
+	EmbedURL      string        `json:"embedUrl"`
+	Points        int           `json:"points,omitempty"`
+	AuthorProfile AuthorProfile `json:"authorProfile"`
+	RelatedVideos []VideoDTO    `json:"relatedVideos"`
+	CommentsList  []Comment     `json:"commentsList"`
 }
 
 type AuthorProfile struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Href  string   `json:"href"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Href   string   `json:"href"`
 	Badges []string `json:"badges"`
 }
 
@@ -84,6 +93,9 @@ func (s *Server) RegisterRoutes(r chi.Router, a *auth.Authenticator) {
 
 		// 代理路由同样需要鉴权，防止绕过
 		r.Get("/p/stream/{driveID}/{fileID}", s.handleStream)
+		r.Get("/p/transcode/{videoID}/status", s.handleTranscodeStatus)
+		r.Post("/p/transcode/{videoID}/start", s.handleTranscodeStart)
+		r.Get("/p/transcode/{videoID}", s.handleTranscode)
 		r.Get("/p/preview/{videoID}", s.handlePreview)
 		r.Get("/p/thumb/{videoID}", s.handleThumb)
 	})
@@ -141,14 +153,14 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 
 	detail := VideoDetailDTO{
 		VideoDTO:    mapVideo(v),
-		VideoSrc:    fmt.Sprintf("/p/stream/%s/%s", v.DriveID, v.FileID),
-		Poster:      v.ThumbnailURL,
+		VideoSrc:    videoSource(v),
+		Poster:      thumbnailURL(v),
 		Description: v.Description,
-		EmbedURL: fmt.Sprintf(`<iframe src="/embed/%s" width="640" height="360" frameborder="0" allowfullscreen></iframe>`, v.ID),
+		EmbedURL:    fmt.Sprintf(`<iframe src="/embed/%s" width="640" height="360" frameborder="0" allowfullscreen></iframe>`, v.ID),
 		AuthorProfile: AuthorProfile{
-			ID:    "author-" + v.Author,
-			Name:  v.Author,
-			Href:  "/author/" + v.Author,
+			ID:     "author-" + v.Author,
+			Name:   v.Author,
+			Href:   "/author/" + v.Author,
 			Badges: []string{},
 		},
 		RelatedVideos: filterVideos(mapVideos(related), v.ID),
@@ -158,7 +170,7 @@ func (s *Server) handleVideoDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
-	cats, err := s.Catalog.ListCategories(r.Context())
+	stats, err := s.Catalog.CountTags(r.Context(), fixedtags.Labels)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -168,9 +180,9 @@ func (s *Server) handleTags(w http.ResponseWriter, r *http.Request) {
 		Label string `json:"label"`
 		Count int    `json:"count"`
 	}
-	out := make([]tag, 0, len(cats))
-	for _, c := range cats {
-		out = append(out, tag{ID: c.Category, Label: c.Category, Count: c.Count})
+	out := make([]tag, 0, len(stats))
+	for _, stat := range stats {
+		out = append(out, tag{ID: stat.Label, Label: stat.Label, Count: stat.Count})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -189,6 +201,130 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	driveID := chi.URLParam(r, "driveID")
 	fileID := chi.URLParam(r, "fileID")
 	s.Proxy.ServeStream(w, r, driveID, fileID)
+}
+
+func (s *Server) handleTranscode(w http.ResponseWriter, r *http.Request) {
+	videoID := chi.URLParam(r, "videoID")
+	v, err := s.Catalog.GetVideo(r.Context(), videoID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	path := s.transcodePath(v.ID)
+	if s.transcodeStatus(v.ID) == "ready" {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		http.ServeFile(w, r, path)
+		return
+	}
+	s.startTranscode(v)
+	w.Header().Set("Retry-After", "3")
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": s.transcodeStatus(v.ID)})
+}
+
+func (s *Server) handleTranscodeStatus(w http.ResponseWriter, r *http.Request) {
+	videoID := chi.URLParam(r, "videoID")
+	if _, err := s.Catalog.GetVideo(r.Context(), videoID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": s.transcodeStatus(videoID)})
+}
+
+func (s *Server) handleTranscodeStart(w http.ResponseWriter, r *http.Request) {
+	videoID := chi.URLParam(r, "videoID")
+	v, err := s.Catalog.GetVideo(r.Context(), videoID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.transcodeStatus(v.ID) != "ready" {
+		s.startTranscode(v)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": s.transcodeStatus(v.ID)})
+}
+
+func (s *Server) startTranscode(v *catalog.Video) {
+	if s.transcodeStatus(v.ID) == "ready" {
+		return
+	}
+	s.transcodeMu.Lock()
+	if s.transcodeJobs == nil {
+		s.transcodeJobs = make(map[string]bool)
+	}
+	if s.transcodeJobs[v.ID] {
+		s.transcodeMu.Unlock()
+		return
+	}
+	s.transcodeJobs[v.ID] = true
+	s.transcodeMu.Unlock()
+
+	go func() {
+		defer s.setTranscoding(v.ID, false)
+		if err := s.generateTranscode(v); err != nil {
+			log.Printf("[transcode] %s: %v", v.Title, err)
+		}
+	}()
+}
+
+func (s *Server) generateTranscode(v *catalog.Video) error {
+	drv, ok := s.Proxy.Registry.Get(v.DriveID)
+	if !ok {
+		return fmt.Errorf("drive not found")
+	}
+	link, err := drv.StreamURL(context.Background(), v.FileID)
+	if err != nil {
+		return err
+	}
+
+	ffmpeg := s.FFmpegPath
+	if ffmpeg == "" {
+		ffmpeg = "ffmpeg"
+	}
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "error",
+		"-nostdin",
+	}
+	if h := buildFFmpegHeaders(link.Headers); h != "" {
+		args = append(args, "-headers", h)
+	}
+	args = append(args,
+		"-i", link.URL,
+		"-map", "0:v:0",
+		"-map", "0:a:0?",
+		"-c:v", "libx264",
+		"-preset", "veryfast",
+		"-tune", "zerolatency",
+		"-pix_fmt", "yuv420p",
+		"-c:a", "aac",
+		"-b:a", "128k",
+		"-movflags", "+faststart",
+		"-y",
+	)
+
+	dst := s.transcodePath(v.ID)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmp := s.transcodeTempPath(v.ID)
+	_ = os.Remove(tmp)
+	args = append(args, tmp)
+	cmd := exec.Command(ffmpeg, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg: %w, stderr: %s", err, string(out))
+	}
+	info, err := os.Stat(tmp)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("ffmpeg produced empty file")
+	}
+	return os.Rename(tmp, dst)
 }
 
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
@@ -227,9 +363,11 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := os.Stat(clean); err != nil {
+		w.Header().Set("Cache-Control", "no-store")
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, max-age=86400")
 	s.Proxy.ServeLocal(w, r, clean)
 }
 
@@ -248,7 +386,7 @@ func mapVideo(v *catalog.Video) VideoDTO {
 		ID:              v.ID,
 		Href:            "/video/" + v.ID,
 		Title:           v.Title,
-		Thumbnail:       v.ThumbnailURL,
+		Thumbnail:       thumbnailURL(v),
 		PreviewSrc:      "/p/preview/" + v.ID,
 		PreviewDuration: 10,
 		PreviewStrategy: "teaser-file",
@@ -265,6 +403,78 @@ func mapVideo(v *catalog.Video) VideoDTO {
 		Tags:            tags,
 		Category:        v.Category,
 	}
+}
+
+func thumbnailURL(v *catalog.Video) string {
+	if v.ThumbnailURL != "" {
+		return v.ThumbnailURL
+	}
+	return "/p/thumb/" + v.ID
+}
+
+func videoSource(v *catalog.Video) string {
+	if needsBrowserTranscode(v.Ext) {
+		return "/p/transcode/" + v.ID
+	}
+	return fmt.Sprintf("/p/stream/%s/%s", v.DriveID, v.FileID)
+}
+
+func needsBrowserTranscode(ext string) bool {
+	switch strings.ToLower(strings.TrimPrefix(ext, ".")) {
+	case "avi", "mkv":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildFFmpegHeaders(h http.Header) string {
+	if len(h) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for k, vs := range h {
+		for _, v := range vs {
+			sb.WriteString(k)
+			sb.WriteString(": ")
+			sb.WriteString(v)
+			sb.WriteString("\r\n")
+		}
+	}
+	return sb.String()
+}
+
+func (s *Server) transcodeStatus(videoID string) string {
+	if info, err := os.Stat(s.transcodePath(videoID)); err == nil && info.Size() > 0 {
+		return "ready"
+	}
+	s.transcodeMu.Lock()
+	defer s.transcodeMu.Unlock()
+	if s.transcodeJobs != nil && s.transcodeJobs[videoID] {
+		return "processing"
+	}
+	return "missing"
+}
+
+func (s *Server) setTranscoding(videoID string, processing bool) {
+	s.transcodeMu.Lock()
+	defer s.transcodeMu.Unlock()
+	if s.transcodeJobs == nil {
+		s.transcodeJobs = make(map[string]bool)
+	}
+	if processing {
+		s.transcodeJobs[videoID] = true
+		return
+	}
+	delete(s.transcodeJobs, videoID)
+}
+
+func (s *Server) transcodePath(videoID string) string {
+	return filepath.Join(s.LocalDir, "transcodes", videoID+".mp4")
+}
+
+func (s *Server) transcodeTempPath(videoID string) string {
+	return filepath.Join(s.LocalDir, "transcodes", videoID+".tmp.mp4")
 }
 
 func mapVideos(vs []*catalog.Video) []VideoDTO {

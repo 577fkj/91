@@ -7,6 +7,7 @@ import { Modal } from "./Modal";
 const kindLabel: Record<string, string> = {
   quark: "夸克网盘",
   p115: "115 网盘",
+  pikpak: "PikPak",
   wopan: "联通沃盘",
 };
 
@@ -83,8 +84,8 @@ export function DrivesPage() {
         id: form.id,
         kind: form.kind,
         name: form.name || form.id,
-        rootId: form.rootId || "0",
-        scanRootId: form.scanRootId || form.rootId || "0",
+        rootId: form.rootId || defaultRootId(form.kind),
+        scanRootId: form.scanRootId || form.rootId || defaultRootId(form.kind),
         credentials: form.creds,
       });
       if (resp.warning) {
@@ -134,7 +135,7 @@ export function DrivesPage() {
         <div className="admin-empty">加载中...</div>
       ) : list.length === 0 ? (
         <div className="admin-card admin-empty">
-          还没有配置任何网盘。点击右上角「新建」，选择夸克 / 115 / 沃盘，填入凭证即可。
+          还没有配置任何网盘。点击右上角「新建」，选择夸克 / 115 / PikPak / 沃盘，填入凭证即可。
         </div>
       ) : (
         <table className="admin-table">
@@ -241,6 +242,15 @@ function DriveForm({
   function setCred(k: string, v: string) {
     onChange({ ...form, creds: { ...form.creds, [k]: v } });
   }
+  function setKind(v: Kind) {
+    onChange({
+      ...form,
+      kind: v,
+      rootId: defaultRootId(v),
+      scanRootId: defaultRootId(v),
+      creds: {},
+    });
+  }
 
   return (
     <div className="admin-form">
@@ -266,11 +276,12 @@ function DriveForm({
         <label>类型</label>
         <select
           value={form.kind}
-          onChange={(e) => set("kind", e.target.value as Kind)}
+          onChange={(e) => setKind(e.target.value as Kind)}
           disabled={isEdit}
         >
           <option value="quark">夸克网盘</option>
           <option value="p115">115 网盘</option>
+          <option value="pikpak">PikPak</option>
           <option value="wopan">联通沃盘</option>
         </select>
       </div>
@@ -279,7 +290,7 @@ function DriveForm({
         <input
           value={form.rootId}
           onChange={(e) => set("rootId", e.target.value)}
-          placeholder="0"
+          placeholder={form.kind === "pikpak" ? "留空表示根目录" : "0"}
         />
       </div>
       <div className="admin-form__row">
@@ -330,6 +341,8 @@ function credentialHelp(kind: Kind, isEdit: boolean): string {
       return `在 pan.quark.cn 登录后，F12 → Network → 任意请求 → Request Headers 里复制整段 Cookie 粘贴到下方。${note}`;
     case "p115":
       return `登录 115.com 后复制 Cookie，形如 "UID=...; CID=...; SEID=...; KID=..."。${note}`;
+    case "pikpak":
+      return `参考 OpenList 的 PikPak 登录方式。可填用户名和密码首次登录，也可填 refresh_token；如返回验证码链接，打开验证后把 captcha_token 粘贴回来。${note}`;
     case "wopan":
       return `需要 access_token 和 refresh_token。后续会加扫码/短信登录入口，第一版只能手工粘贴。${note}`;
     default:
@@ -366,6 +379,48 @@ function credentialFields(kind: Kind): Array<{
           required: true,
         },
       ];
+    case "pikpak":
+      return [
+        {
+          key: "username",
+          label: "用户名 / 邮箱（无 refresh_token 时必填）",
+          placeholder: "user@example.com",
+        },
+        {
+          key: "password",
+          label: "密码（无 refresh_token 时必填）",
+          placeholder: "PikPak 密码",
+        },
+        {
+          key: "platform",
+          label: "platform",
+          placeholder: "web（可选：android / web / pc）",
+          help: "默认 web；如果登录或直链异常，可尝试 android 或 pc。",
+        },
+        {
+          key: "refresh_token",
+          label: "refresh_token（可选）",
+          placeholder: "已有 token 时可直接粘贴",
+          multiline: true,
+        },
+        {
+          key: "captcha_token",
+          label: "captcha_token（可选）",
+          placeholder: "遇到验证码校验时粘贴",
+          multiline: true,
+        },
+        {
+          key: "device_id",
+          label: "device_id（可选）",
+          placeholder: "留空自动生成并保存",
+        },
+        {
+          key: "disable_media_link",
+          label: "disable_media_link",
+          placeholder: "true",
+          help: "默认 true，使用原始下载链接；填 false 可尝试使用媒体缓存链接。",
+        },
+      ];
     case "wopan":
       return [
         {
@@ -387,4 +442,8 @@ function credentialFields(kind: Kind): Array<{
         },
       ];
   }
+}
+
+function defaultRootId(kind: Kind): string {
+  return kind === "pikpak" ? "" : "0";
 }

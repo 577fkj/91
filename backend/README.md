@@ -2,7 +2,7 @@
 
 视频聚合站的 Go 后端。提供三件事：
 
-1. 三家网盘统一抽象（夸克 / 115 / 联通沃盘）
+1. 多家网盘统一抽象（夸克 / 115 / PikPak / 联通沃盘）
 2. 视频元数据目录（SQLite）+ 扫描 + teaser 预生成
 3. REST API（前台）+ 管理后台 + 直链代理
 
@@ -17,6 +17,7 @@ internal/
     iface.go                Drive 接口
     quark/                  夸克（自己实现，参考 OpenList quark_uc）
     p115/                   115（壳子 + SheltonZhu/115driver）
+    pikpak/                 PikPak（自己实现，参考 OpenList pikpak）
     wopan/                  联通沃盘（壳子 + OpenListTeam/wopan-sdk-go）
   scanner/                  扫目录 → 落库
   preview/                  ffmpeg 抽 10s teaser
@@ -81,12 +82,13 @@ go run ./cmd/server 后端 8080
    ```
 3. 手动触发扫描：`POST /admin/api/drives/my-quark/rescan`
 
-三家盘的凭证字段：
+各网盘的凭证字段：
 
 | kind   | credentials 字段                                              |
 |--------|---------------------------------------------------------------|
 | quark  | `cookie`                                                      |
 | p115   | `cookie`（形如 `UID=...; CID=...; SEID=...; KID=...`）         |
+| pikpak | `username`、`password`，可选 `refresh_token`、`captcha_token`、`device_id`、`platform`、`disable_media_link` |
 | wopan  | `access_token`、`refresh_token`，可选 `family_id`              |
 
 ## 文件名约定

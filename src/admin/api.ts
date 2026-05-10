@@ -54,7 +54,7 @@ export function me() {
 
 export type AdminDrive = {
   id: string;
-  kind: "quark" | "p115" | "wopan";
+  kind: "quark" | "p115" | "pikpak" | "wopan";
   name: string;
   rootId: string;
   scanRootId: string;
@@ -69,7 +69,7 @@ export function listDrives() {
 
 export type UpsertDriveInput = {
   id: string;
-  kind: "quark" | "p115" | "wopan";
+  kind: "quark" | "p115" | "pikpak" | "wopan";
   name: string;
   rootId: string;
   scanRootId: string;

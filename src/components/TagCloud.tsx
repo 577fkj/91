@@ -4,7 +4,7 @@ import { fetchTags, type TagItem } from "@/data/videos";
 
 export function TagCloud() {
   const [params] = useSearchParams();
-  const activeTag = params.get("cat");
+  const activeTag = params.get("tag");
   const [tags, setTags] = useState<TagItem[]>([]);
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export function TagCloud() {
       {tags.map((tag) => (
         <Link
           key={tag.id}
-          to={`/list?cat=${encodeURIComponent(tag.label)}`}
+          to={`/list?tag=${encodeURIComponent(tag.label)}`}
           className={`tag-chip ${activeTag === tag.label ? "is-active" : ""}`}
           title={
             typeof tag.count === "number" ? `${tag.count} 个视频` : undefined

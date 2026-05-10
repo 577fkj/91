@@ -1304,10 +1304,11 @@ VideoProject/
 ├─ backend/                    Go 单体服务
 │  ├─ cmd/server/main.go
 │  ├─ internal/
-│  │  ├─ drives/               Drive 接口 + 三家实现
+│  │  ├─ drives/               Drive 接口 + 多家实现
 │  │  │  ├─ iface.go           List / Stat / StreamURL / RefreshAuth
 │  │  │  ├─ quark/             自己实现（参考 OpenList quark_uc）
 │  │  │  ├─ p115/              壳 + SheltonZhu/115driver
+│  │  │  ├─ pikpak/            自己实现（参考 OpenList pikpak）
 │  │  │  └─ wopan/             壳 + OpenListTeam/wopan-sdk-go
 │  │  ├─ catalog/              SQLite + VideoItem 增删改查
 │  │  ├─ scanner/              扫目录 → 落库 + 异步抽 teaser
@@ -1330,6 +1331,7 @@ VideoProject/
 - **SDK**：
   - 夸克：移植 OpenList `drivers/quark_uc` 的 HTTP 逻辑（纯 Cookie + resty）。
   - 115：`github.com/SheltonZhu/115driver`，通过 `replace` 指令指向 `../115driver-1.3.2`。
+  - PikPak：移植 OpenList `drivers/pikpak` 的 HTTP 逻辑（用户名密码 / refresh_token + captcha_token + resty）；第一版支持扫描和播放，teaser 上传走本地兜底。
   - 沃盘：`github.com/OpenListTeam/wopan-sdk-go`，`replace` 指向 `../wopan-sdk-go-0.2.0`。
 - **视频处理**：ffmpeg / ffprobe，作为外部子进程调用。
 - **部署**：本地 Windows 开发，最终部署到 Linux 服务器（二进制 + systemd + nginx 反代）。
@@ -1474,6 +1476,7 @@ POST /admin/api/videos/:id/regen-preview
 
 - **115 扫码**：`POST /admin/api/drives/:id/login` 返回二维码图片；前端轮询 `.../login/status` 直到成功
 - **夸克**：最稳是让用户在电脑浏览器登录 pan.quark.cn 后 F12 复制 Cookie，后台粘贴保存。可选：实现扫码登录（OpenList 社区有方案）
+- **PikPak**：参考 OpenList，后台粘贴 username/password 或 refresh_token；遇到 captcha URL 时手动验证后回填 captcha_token
 - **沃盘**：手机号 → 后端请求短信 → 前端填验证码 → 登录
 
 ### 15.9 前端改动

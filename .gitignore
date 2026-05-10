@@ -8,6 +8,7 @@ dist
 
 # 第三方源码参考，可选，详见 vendor-refs/README.md
 vendor-refs/
+OpenList-4.2.1/
 
 # 后端数据目录（SQLite + teaser/封面）
 backend/data/

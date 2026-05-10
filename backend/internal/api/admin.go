@@ -138,6 +138,11 @@ func (a *AdminServer) handleUpsertDrive(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "id and kind are required", http.StatusBadRequest)
 		return
 	}
+	if len(body.Credentials) == 0 {
+		if existing, err := a.Catalog.GetDrive(r.Context(), body.ID); err == nil && len(existing.Credentials) > 0 {
+			body.Credentials = existing.Credentials
+		}
+	}
 	d := &catalog.Drive{
 		ID: body.ID, Kind: body.Kind, Name: body.Name,
 		RootID: body.RootID, ScanRootID: body.ScanRootID,
