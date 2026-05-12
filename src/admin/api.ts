@@ -70,6 +70,22 @@ export function listDrives() {
   return request<AdminDrive[]>("/drives");
 }
 
+export type DriveStorageUsage = {
+  thumbnailBytes: number;
+  teaserBytes: number;
+  totalBytes: number;
+};
+
+export type AdminDriveStorage = DriveStorageUsage & {
+  availableBytes: number;
+  capacityBytes: number;
+  drives: Record<string, DriveStorageUsage>;
+};
+
+export function getDriveStorage() {
+  return request<AdminDriveStorage>("/drives/storage");
+}
+
 export type UpsertDriveInput = {
   id: string;
   kind: "quark" | "p115" | "pikpak" | "wopan" | "onedrive";

@@ -149,6 +149,8 @@
   }
 
   .main-nav.is-open .main-nav__link {
+    display: flex;
+    width: 100%;
     height: auto;
     padding: var(--space-3) var(--space-2);
     border-bottom: 1px solid #1f1f1f;

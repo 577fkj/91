@@ -3,6 +3,7 @@ import { Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import * as api from "./api";
 import { useToast } from "./ToastContext";
 import { Modal } from "./Modal";
+import { formatBytes } from "./storageFormat";
 
 const kindLabel: Record<string, string> = {
   quark: "夸克网盘",
@@ -34,6 +35,7 @@ const emptyForm: FormState = {
 
 export function DrivesPage() {
   const [list, setList] = useState<api.AdminDrive[]>([]);
+  const [storage, setStorage] = useState<api.AdminDriveStorage | null>(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -44,8 +46,12 @@ export function DrivesPage() {
   async function refresh() {
     setLoading(true);
     try {
-      const data = await api.listDrives();
+      const [data, storageData] = await Promise.all([
+        api.listDrives(),
+        api.getDriveStorage(),
+      ]);
       setList(data ?? []);
+      setStorage(storageData);
     } catch (e) {
       show(e instanceof Error ? e.message : "加载失败", "error");
     } finally {
@@ -146,6 +152,8 @@ export function DrivesPage() {
         </button>
       </header>
 
+      {storage && <StorageSummary storage={storage} />}
+
       {loading ? (
         <div className="admin-empty">加载中...</div>
       ) : list.length === 0 ? (
@@ -161,6 +169,7 @@ export function DrivesPage() {
               <th>ID</th>
               <th>状态</th>
               <th>扫描根</th>
+              <th>本地占用</th>
               <th>Teaser</th>
               <th className="is-actions">操作</th>
             </tr>
@@ -176,6 +185,9 @@ export function DrivesPage() {
                 </td>
                 <td style={{ fontFamily: "ui-monospace", fontSize: 12 }}>
                   {d.scanRootId || d.rootId}
+                </td>
+                <td>
+                  <StorageCell usage={storage?.drives[d.id]} />
                 </td>
                 <td>
                   <TeaserCounts drive={d} />
@@ -227,6 +239,42 @@ export function DrivesPage() {
         <DriveForm form={form} onChange={setForm} isEdit={!!list.find((x) => x.id === form.id)} />
       </Modal>
     </section>
+  );
+}
+
+function StorageSummary({ storage }: { storage: api.AdminDriveStorage }) {
+  return (
+    <section className="admin-card admin-storage-summary" aria-label="本地媒体存储">
+      <div className="admin-storage-summary__metric">
+        <span>封面占用</span>
+        <strong>{formatBytes(storage.thumbnailBytes)}</strong>
+      </div>
+      <div className="admin-storage-summary__metric">
+        <span>Teaser 占用</span>
+        <strong>{formatBytes(storage.teaserBytes)}</strong>
+      </div>
+      <div className="admin-storage-summary__metric">
+        <span>本地媒体合计</span>
+        <strong>{formatBytes(storage.totalBytes)}</strong>
+      </div>
+      <div className="admin-storage-summary__metric">
+        <span>磁盘可用</span>
+        <strong>{formatBytes(storage.availableBytes)}</strong>
+      </div>
+    </section>
+  );
+}
+
+function StorageCell({ usage }: { usage?: api.DriveStorageUsage }) {
+  if (!usage || usage.totalBytes <= 0) {
+    return <span className="admin-storage-cell__empty">0 B</span>;
+  }
+  return (
+    <div className="admin-storage-cell">
+      <strong>{formatBytes(usage.totalBytes)}</strong>
+      <span>封面 {formatBytes(usage.thumbnailBytes)}</span>
+      <span>Teaser {formatBytes(usage.teaserBytes)}</span>
+    </div>
   );
 }
 

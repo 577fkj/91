@@ -130,7 +130,7 @@ func TestHandleUploadVideoSavesFileVideoTagsAndQueuesPreview(t *testing.T) {
 	}
 }
 
-func TestHandleUploadVideoDefaultsBlankTitleToTimestamp(t *testing.T) {
+func TestHandleUploadVideoDefaultsBlankTitleToOriginalFileName(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
 	if err != nil {
@@ -142,7 +142,7 @@ func TestHandleUploadVideoDefaultsBlankTitleToTimestamp(t *testing.T) {
 		}
 	})
 	server := &Server{Catalog: cat, LocalDir: t.TempDir()}
-	req := multipartUploadRequest(t, map[string]string{"title": "  "}, "clip.mp4", "video-bytes")
+	req := multipartUploadRequest(t, map[string]string{"title": "  "}, "holiday.clip.final.mp4", "video-bytes")
 	rr := httptest.NewRecorder()
 
 	server.handleUploadVideo(rr, req)
@@ -158,8 +158,8 @@ func TestHandleUploadVideoDefaultsBlankTitleToTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get uploaded video: %v", err)
 	}
-	if got.Title == "" || !strings.HasPrefix(got.Title, "upload-") {
-		t.Fatalf("title = %q, want upload timestamp fallback", got.Title)
+	if got.Title != "holiday.clip.final" {
+		t.Fatalf("title = %q, want original file name without extension", got.Title)
 	}
 }
 

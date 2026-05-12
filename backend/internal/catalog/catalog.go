@@ -503,6 +503,35 @@ func (c *Catalog) CountTeasersByDrive(ctx context.Context) (map[string]DriveTeas
 	return out, nil
 }
 
+type LocalMediaRef struct {
+	DriveID      string
+	VideoID      string
+	PreviewLocal string
+}
+
+func (c *Catalog) ListLocalMediaRefs(ctx context.Context) ([]LocalMediaRef, error) {
+	rows, err := c.db.QueryContext(ctx,
+		`SELECT drive_id, id, COALESCE(preview_local, '')
+		   FROM videos`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []LocalMediaRef
+	for rows.Next() {
+		var ref LocalMediaRef
+		if err := rows.Scan(&ref.DriveID, &ref.VideoID, &ref.PreviewLocal); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ---------- Drive ----------
 
 type Drive struct {

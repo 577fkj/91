@@ -4,6 +4,7 @@ import { Check, Film, UploadCloud } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { SectionHeader } from "@/components/SectionHeader";
 import { uploadVideo } from "@/data/videos";
+import { defaultUploadTitleFromFileName } from "@/lib/uploadTitle";
 import type { VideoItem } from "@/types";
 
 const UPLOAD_TAGS = ["奶子", "臀", "口角", "女大", "人妻", "AV"];
@@ -27,7 +28,9 @@ export default function UploadPage() {
   }, [file]);
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setFile(event.target.files?.[0] ?? null);
+    const nextFile = event.target.files?.[0] ?? null;
+    setFile(nextFile);
+    setTitle(nextFile ? defaultUploadTitleFromFileName(nextFile.name) : "");
     setUploaded(null);
     setError("");
   }
@@ -83,7 +86,7 @@ export default function UploadPage() {
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="不填则使用当前时间戳"
+              placeholder="选择文件后自动填入"
               maxLength={120}
             />
           </label>

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +191,117 @@ func TestHandleListDrivesIncludesTeaserCounts(t *testing.T) {
 	}
 	if byID["PikPak"].Ready != 0 || byID["PikPak"].Pending != 1 || byID["PikPak"].Failed != 1 {
 		t.Fatalf("PikPak counts = %#v, want ready=0 pending=1 failed=1", byID["PikPak"])
+	}
+}
+
+func TestHandleDriveStorageReportsLocalMediaUsage(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	cat, err := catalog.Open(filepath.Join(root, "catalog.db"))
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	localDir := filepath.Join(root, "previews")
+	thumbDir := filepath.Join(localDir, "thumbs")
+	if err := os.MkdirAll(thumbDir, 0o755); err != nil {
+		t.Fatalf("mkdir thumbs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "drive-one-video.mp4"), []byte("teaser-one"), 0o644); err != nil {
+		t.Fatalf("write teaser one: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "drive-two-video.mp4"), []byte("teaser-two!!"), 0o644); err != nil {
+		t.Fatalf("write teaser two: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(thumbDir, "drive-one-video.jpg"), []byte("jpg-one"), 0o644); err != nil {
+		t.Fatalf("write thumb one: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(thumbDir, "drive-two-video.jpg"), []byte("jpg-two!!"), 0o644); err != nil {
+		t.Fatalf("write thumb two: %v", err)
+	}
+
+	for _, d := range []*catalog.Drive{
+		{ID: "drive-one", Kind: "onedrive", Name: "Drive One", RootID: "root", Status: "ok"},
+		{ID: "drive-two", Kind: "pikpak", Name: "Drive Two", RootID: "", Status: "ok"},
+	} {
+		if err := cat.UpsertDrive(ctx, d); err != nil {
+			t.Fatalf("seed drive %s: %v", d.ID, err)
+		}
+	}
+	now := time.Now()
+	for _, v := range []*catalog.Video{
+		{
+			ID:            "drive-one-video",
+			DriveID:       "drive-one",
+			FileID:        "file-one",
+			Title:         "Video One",
+			PreviewLocal:  filepath.Join(localDir, "drive-one-video.mp4"),
+			PreviewStatus: "ready",
+			PublishedAt:   now,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "drive-two-video",
+			DriveID:       "drive-two",
+			FileID:        "file-two",
+			Title:         "Video Two",
+			PreviewLocal:  filepath.Join(localDir, "drive-two-video.mp4"),
+			PreviewStatus: "ready",
+			PublishedAt:   now,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := cat.UpsertVideo(ctx, v); err != nil {
+			t.Fatalf("seed video %s: %v", v.ID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/drives/storage", nil)
+	rr := httptest.NewRecorder()
+	(&AdminServer{Catalog: cat, LocalPreviewDir: localDir}).handleDriveStorage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		ThumbnailBytes int64 `json:"thumbnailBytes"`
+		TeaserBytes    int64 `json:"teaserBytes"`
+		TotalBytes     int64 `json:"totalBytes"`
+		AvailableBytes int64 `json:"availableBytes"`
+		Drives         map[string]struct {
+			ThumbnailBytes int64 `json:"thumbnailBytes"`
+			TeaserBytes    int64 `json:"teaserBytes"`
+			TotalBytes     int64 `json:"totalBytes"`
+		} `json:"drives"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ThumbnailBytes != int64(len("jpg-one")+len("jpg-two!!")) {
+		t.Fatalf("thumbnail bytes = %d, want %d", got.ThumbnailBytes, len("jpg-one")+len("jpg-two!!"))
+	}
+	if got.TeaserBytes != int64(len("teaser-one")+len("teaser-two!!")) {
+		t.Fatalf("teaser bytes = %d, want %d", got.TeaserBytes, len("teaser-one")+len("teaser-two!!"))
+	}
+	if got.TotalBytes != got.ThumbnailBytes+got.TeaserBytes {
+		t.Fatalf("total bytes = %d, want thumbnail + teaser", got.TotalBytes)
+	}
+	if got.AvailableBytes <= 0 {
+		t.Fatalf("available bytes = %d, want positive", got.AvailableBytes)
+	}
+	if got.Drives["drive-one"].ThumbnailBytes != int64(len("jpg-one")) ||
+		got.Drives["drive-one"].TeaserBytes != int64(len("teaser-one")) {
+		t.Fatalf("drive-one usage = %#v", got.Drives["drive-one"])
+	}
+	if got.Drives["drive-two"].TotalBytes != int64(len("jpg-two!!")+len("teaser-two!!")) {
+		t.Fatalf("drive-two total = %d, want %d", got.Drives["drive-two"].TotalBytes, len("jpg-two!!")+len("teaser-two!!"))
 	}
 }
 

@@ -313,7 +313,7 @@ func (s *Server) handleUploadVideo(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	title := strings.TrimSpace(r.FormValue("title"))
 	if title == "" {
-		title = "upload-" + now.Format("20060102150405")
+		title = uploadTitleFromFileName(originalName)
 	}
 
 	uploadID, err := newUploadID(now)
@@ -745,6 +745,20 @@ func uploadTagValues(r *http.Request) []string {
 	values := append([]string{}, r.MultipartForm.Value["tags"]...)
 	values = append(values, r.MultipartForm.Value["tag"]...)
 	return values
+}
+
+func uploadTitleFromFileName(fileName string) string {
+	name := strings.TrimSpace(filepath.Base(fileName))
+	ext := filepath.Ext(name)
+	if ext != "" {
+		if trimmed := strings.TrimSuffix(name, ext); strings.TrimSpace(trimmed) != "" {
+			return trimmed
+		}
+	}
+	if name != "" {
+		return name
+	}
+	return "upload-" + time.Now().Format("20060102150405")
 }
 
 func parseUploadTags(values []string) ([]string, error) {

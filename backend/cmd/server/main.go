@@ -101,8 +101,9 @@ func main() {
 	}
 
 	adminServer := &api.AdminServer{
-		Catalog: cat,
-		Auth:    authr,
+		Catalog:         cat,
+		Auth:            authr,
+		LocalPreviewDir: cfg.Storage.LocalPreviewDir,
 		OnDriveSaved: func(driveID string) error {
 			d, err := cat.GetDrive(ctx, driveID)
 			if err != nil {

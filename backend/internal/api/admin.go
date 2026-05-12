@@ -15,6 +15,8 @@ import (
 type AdminServer struct {
 	Catalog *catalog.Catalog
 	Auth    *auth.Authenticator
+	// LocalPreviewDir is the local directory that stores generated teasers and thumbs.
+	LocalPreviewDir string
 	// Hooks：外层注入实际执行者
 	OnDriveSaved          func(driveID string) error
 	OnDriveRemoved        func(driveID string)
@@ -40,6 +42,7 @@ func (a *AdminServer) Register(r chi.Router) {
 
 			// 网盘
 			r.Get("/drives", a.handleListDrives)
+			r.Get("/drives/storage", a.handleDriveStorage)
 			r.Post("/drives", a.handleUpsertDrive)
 			r.Delete("/drives/{id}", a.handleDeleteDrive)
 			r.Post("/drives/{id}/rescan", a.handleRescan)
