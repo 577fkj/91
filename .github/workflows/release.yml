@@ -44,9 +44,5 @@ jobs:
           if [ -z "$NOTES" ]; then
             NOTES="Prebuilt Linux release packages."
           fi
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/*.tar.gz --clobber
-            gh release edit "$TAG" --title "$TAG" --notes "$NOTES"
-          else
-            gh release create "$TAG" release/*.tar.gz --title "$TAG" --notes "$NOTES"
-          fi
+          gh release delete "$TAG" --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" release/*.tar.gz --title "$TAG" --notes "$NOTES" --verify-tag
