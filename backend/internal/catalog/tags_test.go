@@ -206,6 +206,100 @@ func TestDeleteTagRemovesTagFromVideos(t *testing.T) {
 	}
 }
 
+func TestDeleteTagSuppressesAutomaticCollectionRecreation(t *testing.T) {
+	ctx := context.Background()
+	cat, err := Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, id := range []string{"video-1", "video-2"} {
+		if err := cat.UpsertVideo(ctx, &Video{
+			ID:          id,
+			DriveID:     "drive",
+			FileID:      id,
+			Title:       "合集视频",
+			Category:    "sunny",
+			PublishedAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}); err != nil {
+			t.Fatalf("seed video %s: %v", id, err)
+		}
+	}
+
+	if label, ok, err := cat.EnsureCollectionTag(ctx, "sunny"); err != nil || !ok || label != "sunny" {
+		t.Fatalf("ensure collection = %q, %v, %v; want sunny true nil", label, ok, err)
+	}
+	tag := mustTagByLabel(t, ctx, cat, "sunny")
+	if _, err := cat.DeleteTag(ctx, tag.ID); err != nil {
+		t.Fatalf("delete tag: %v", err)
+	}
+
+	if label, ok, err := cat.EnsureCollectionTag(ctx, "sunny"); err != nil || ok || label != "" {
+		t.Fatalf("ensure deleted collection = %q, %v, %v; want empty false nil", label, ok, err)
+	}
+	for _, tag := range mustListTags(t, ctx, cat) {
+		if tag.Label == "sunny" {
+			t.Fatal("deleted collection tag was recreated automatically")
+		}
+	}
+}
+
+func TestCreateTagAndClassifyRestoresDeletedTag(t *testing.T) {
+	ctx := context.Background()
+	cat, err := Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	if err := cat.UpsertVideo(ctx, &Video{
+		ID:          "video-1",
+		DriveID:     "drive",
+		FileID:      "file-1",
+		Title:       "清纯短发",
+		PublishedAt: now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if _, err := cat.CreateTagAndClassify(ctx, "清纯", nil, "user"); err != nil {
+		t.Fatalf("create tag: %v", err)
+	}
+	tag := mustTagByLabel(t, ctx, cat, "清纯")
+	if _, err := cat.DeleteTag(ctx, tag.ID); err != nil {
+		t.Fatalf("delete tag: %v", err)
+	}
+
+	classified, err := cat.CreateTagAndClassify(ctx, "清纯", nil, "user")
+	if err != nil {
+		t.Fatalf("recreate tag: %v", err)
+	}
+	if classified != 1 {
+		t.Fatalf("classified = %d, want 1", classified)
+	}
+	got, err := cat.GetVideo(ctx, "video-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if !sameStrings(got.Tags, []string{"清纯"}) {
+		t.Fatalf("video tags = %#v, want 清纯", got.Tags)
+	}
+}
+
 func TestDeleteTagRejectsSystemTags(t *testing.T) {
 	ctx := context.Background()
 	cat, err := Open(t.TempDir() + "/catalog.db")
