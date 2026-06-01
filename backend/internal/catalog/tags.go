@@ -403,6 +403,57 @@ func (c *Catalog) CreateTagAndClassify(ctx context.Context, label string, aliase
 	return c.classifyTag(ctx, tag)
 }
 
+func (c *Catalog) EnsureTagForVideoIDPrefix(ctx context.Context, prefix, label string, aliases []string, source string) (int, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return 0, errors.New("video id prefix is required")
+	}
+	tag, err := c.ensureTag(ctx, label, aliases, source)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := c.db.QueryContext(ctx, `
+SELECT v.id
+  FROM videos v
+ WHERE v.id LIKE ? || '%'
+   AND COALESCE(v.tags_manual, 0) = 0
+   AND NOT EXISTS (
+	 SELECT 1
+	   FROM video_tags vt
+	  WHERE vt.video_id = v.id
+	    AND vt.tag_id = ?
+   )
+ ORDER BY v.id ASC`, prefix, tag.ID)
+	if err != nil {
+		return 0, err
+	}
+	var videoIDs []string
+	for rows.Next() {
+		var videoID string
+		if err := rows.Scan(&videoID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		videoIDs = append(videoIDs, videoID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	for _, videoID := range videoIDs {
+		if err := c.insertVideoTag(ctx, videoID, tag.ID, "auto"); err != nil {
+			return 0, err
+		}
+		if err := c.syncVideoTagsJSON(ctx, videoID, false); err != nil {
+			return 0, err
+		}
+	}
+	return len(videoIDs), nil
+}
+
 func (c *Catalog) DeleteTag(ctx context.Context, tagID int64) (int, error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -464,10 +515,66 @@ func (c *Catalog) DeleteTag(ctx context.Context, tagID int64) (int, error) {
 
 func (c *Catalog) ListTags(ctx context.Context) ([]Tag, error) {
 	rows, err := c.db.QueryContext(ctx, `
-SELECT t.id, t.label, t.aliases, t.source, COUNT(v.id) AS cnt
+WITH tagged_tags AS (
+	SELECT vt.tag_id,
+	       tagged.id,
+	       COALESCE(tagged.content_hash, '') AS content_hash,
+	       COALESCE(tagged.sampled_sha256, '') AS sampled_sha256,
+	       tagged.size_bytes,
+	       COALESCE(tagged.file_name, '') AS file_name
+	  FROM video_tags vt
+	  JOIN videos tagged ON tagged.id = vt.video_id
+	 WHERE COALESCE(tagged.hidden, 0) = 0
+),
+tag_candidates AS (
+	SELECT tag_id, id AS video_id
+	  FROM tagged_tags
+	UNION ALL
+	SELECT tag_id,
+	       (SELECT canonical.id
+	          FROM videos canonical
+	         WHERE tagged_tags.content_hash != ''
+	           AND canonical.content_hash = tagged_tags.content_hash
+	           AND COALESCE(canonical.content_hash, '') != ''
+	         ORDER BY canonical.created_at ASC, canonical.id ASC
+	         LIMIT 1) AS video_id
+	  FROM tagged_tags
+	 WHERE content_hash != ''
+	UNION ALL
+	SELECT tag_id,
+	       (SELECT canonical.id
+	          FROM videos canonical
+	         WHERE tagged_tags.sampled_sha256 != ''
+	           AND tagged_tags.size_bytes > 0
+	           AND canonical.sampled_sha256 = tagged_tags.sampled_sha256
+	           AND canonical.size_bytes = tagged_tags.size_bytes
+	           AND COALESCE(canonical.sampled_sha256, '') != ''
+	           AND canonical.size_bytes > 0
+	         ORDER BY canonical.created_at ASC, canonical.id ASC
+	         LIMIT 1) AS video_id
+	  FROM tagged_tags
+	 WHERE sampled_sha256 != '' AND size_bytes > 0
+	UNION ALL
+	SELECT tag_id,
+	       (SELECT canonical.id
+	          FROM videos canonical
+	         WHERE tagged_tags.file_name != ''
+	           AND tagged_tags.size_bytes > 0
+	           AND canonical.file_name = tagged_tags.file_name
+	           AND canonical.size_bytes = tagged_tags.size_bytes
+	           AND COALESCE(canonical.file_name, '') != ''
+	           AND canonical.size_bytes > 0
+	         ORDER BY canonical.created_at ASC, canonical.id ASC
+	         LIMIT 1) AS video_id
+	  FROM tagged_tags
+	 WHERE file_name != '' AND size_bytes > 0
+)
+SELECT t.id, t.label, t.aliases, t.source, COUNT(DISTINCT videos.id) AS cnt
 FROM tags t
-LEFT JOIN video_tags vt ON vt.tag_id = t.id
-LEFT JOIN videos v ON v.id = vt.video_id AND COALESCE(v.hidden, 0) = 0
+LEFT JOIN tag_candidates tc ON tc.tag_id = t.id AND tc.video_id IS NOT NULL
+LEFT JOIN videos ON videos.id = tc.video_id
+	AND COALESCE(videos.hidden, 0) = 0
+	AND `+uniqueVideoWhereSQL+`
 GROUP BY t.id, t.label, t.aliases, t.source
 ORDER BY cnt DESC, t.label ASC`)
 	if err != nil {
@@ -483,6 +590,66 @@ ORDER BY cnt DESC, t.label ASC`)
 		out = append(out, tag)
 	}
 	return out, nil
+}
+
+func videoMatchesTagLabelSQL(videoAlias string) string {
+	return fmt.Sprintf(`%s.id IN (
+			WITH tagged_videos AS (
+				SELECT tagged.id,
+				       COALESCE(tagged.content_hash, '') AS content_hash,
+				       COALESCE(tagged.sampled_sha256, '') AS sampled_sha256,
+				       tagged.size_bytes,
+				       COALESCE(tagged.file_name, '') AS file_name
+				  FROM video_tags vt
+				  JOIN tags tag_filter ON tag_filter.id = vt.tag_id
+				  JOIN videos tagged ON tagged.id = vt.video_id
+				 WHERE tag_filter.label = ? COLLATE NOCASE
+				   AND COALESCE(tagged.hidden, 0) = 0
+			),
+			tag_candidates AS (
+				SELECT id AS video_id
+				  FROM tagged_videos
+				UNION ALL
+				SELECT (SELECT canonical.id
+				          FROM videos canonical
+				         WHERE tagged_videos.content_hash != ''
+				           AND canonical.content_hash = tagged_videos.content_hash
+				           AND COALESCE(canonical.content_hash, '') != ''
+				         ORDER BY canonical.created_at ASC, canonical.id ASC
+				         LIMIT 1) AS video_id
+				  FROM tagged_videos
+				 WHERE content_hash != ''
+				UNION ALL
+				SELECT (SELECT canonical.id
+				          FROM videos canonical
+				         WHERE tagged_videos.sampled_sha256 != ''
+				           AND tagged_videos.size_bytes > 0
+				           AND canonical.sampled_sha256 = tagged_videos.sampled_sha256
+				           AND canonical.size_bytes = tagged_videos.size_bytes
+				           AND COALESCE(canonical.sampled_sha256, '') != ''
+				           AND canonical.size_bytes > 0
+				         ORDER BY canonical.created_at ASC, canonical.id ASC
+				         LIMIT 1) AS video_id
+				  FROM tagged_videos
+				 WHERE sampled_sha256 != '' AND size_bytes > 0
+				UNION ALL
+				SELECT (SELECT canonical.id
+				          FROM videos canonical
+				         WHERE tagged_videos.file_name != ''
+				           AND tagged_videos.size_bytes > 0
+				           AND canonical.file_name = tagged_videos.file_name
+				           AND canonical.size_bytes = tagged_videos.size_bytes
+				           AND COALESCE(canonical.file_name, '') != ''
+				           AND canonical.size_bytes > 0
+				         ORDER BY canonical.created_at ASC, canonical.id ASC
+				         LIMIT 1) AS video_id
+				  FROM tagged_videos
+				 WHERE file_name != '' AND size_bytes > 0
+			)
+			SELECT video_id
+			  FROM tag_candidates
+			 WHERE video_id IS NOT NULL
+		)`, videoAlias)
 }
 
 func (c *Catalog) SetManualVideoTags(ctx context.Context, videoID string, labels []string) error {

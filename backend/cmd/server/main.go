@@ -857,13 +857,14 @@ func (a *App) attachSpider91Crawler(d *catalog.Drive, drv *spider91.Driver) {
 	a.spider91Crawlers[driveID] = c
 	a.mu.Unlock()
 
-	// 确保 "91porn" 系统标签存在，并把已入库的 spider91 视频按 author 字段
-	// 匹配补打这个标签（CreateTagAndClassify 内部对所有视频走一遍 classify）。
-	// 重复调用是幂等的：tags 用 INSERT OR IGNORE，video_tags 也是 INSERT OR IGNORE。
+	// 确保 "91porn" 系统标签存在，并按 spider91 来源前缀给历史视频补打。
+	// 不能只靠文本匹配：老版本入库的视频可能没有 author/tags 字段，但 id 前缀
+	// "spider91-<driveID>-" 会一直保留，即使后续迁移到 PikPak/115 也不变。
 	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	go func() {
 		defer cancel()
-		if _, err := a.cat.CreateTagAndClassify(bgCtx, spider91.DefaultTag, nil, "system"); err != nil {
+		prefix := "spider91-" + driveID + "-"
+		if _, err := a.cat.EnsureTagForVideoIDPrefix(bgCtx, prefix, spider91.DefaultTag, nil, "system"); err != nil {
 			log.Printf("[spider91] ensure %q tag: %v", spider91.DefaultTag, err)
 		}
 	}()

@@ -55,7 +55,7 @@ func TestCrawlerRunOnceFullFlow(t *testing.T) {
 	//    同时仍写 --output 文件作归档。
 	videoEntries := []map[string]string{
 		{
-			"title":      "Video One",
+			"title":      "Video One 口交",
 			"thumb_url":  srv.URL + "/thumb/not-120001.jpg",
 			"video_url":  srv.URL + "/videos/120001.mp4",
 			"viewkey":    "vk-001",
@@ -95,6 +95,9 @@ func TestCrawlerRunOnceFullFlow(t *testing.T) {
 		Name: "test crawler",
 	}); err != nil {
 		t.Fatalf("upsert drive: %v", err)
+	}
+	if _, err := cat.CreateTagAndClassify(context.Background(), "Video One", nil, "user"); err != nil {
+		t.Fatalf("create user tag: %v", err)
 	}
 
 	var newVideos []*catalog.Video
@@ -189,6 +192,17 @@ func TestCrawlerRunOnceFullFlow(t *testing.T) {
 		}
 		if !hasDefaultTag {
 			t.Fatalf("video %s tags = %v, want contain %q", videoID, v.Tags, DefaultTag)
+		}
+		if sourceID == "120001" {
+			if !containsString(v.Tags, "口交") {
+				t.Fatalf("video %s tags = %v, want contain built-in tag 口交", videoID, v.Tags)
+			}
+			if !containsString(v.Tags, "Video One") {
+				t.Fatalf("video %s tags = %v, want contain user tag Video One", videoID, v.Tags)
+			}
+		}
+		if sourceID == "120002" && (containsString(v.Tags, "口交") || containsString(v.Tags, "Video One")) {
+			t.Fatalf("video %s tags = %v, should not inherit tags from other spider91 videos", videoID, v.Tags)
 		}
 	}
 
@@ -761,4 +775,13 @@ func buildFakeSpiderScript(entries []map[string]string) string {
 	sb.WriteString("\nOUT_EOF\n")
 	sb.WriteString("fi\n")
 	return sb.String()
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -326,6 +326,75 @@ func TestCreateTagAndClassifyRestoresDeletedTag(t *testing.T) {
 	}
 }
 
+func TestEnsureTagForVideoIDPrefixBackfillsSourceTag(t *testing.T) {
+	ctx := context.Background()
+	cat, err := Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, seed := range []struct {
+		id     string
+		manual bool
+	}{
+		{id: "spider91-91-spider-1200001"},
+		{id: "spider91-91-spider-1200002", manual: true},
+		{id: "spider91-other-1200003"},
+	} {
+		if err := cat.UpsertVideo(ctx, &Video{
+			ID:          seed.id,
+			DriveID:     "91-spider",
+			FileID:      seed.id + ".mp4",
+			Title:       "legacy title without source text",
+			PublishedAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", seed.id, err)
+		}
+		if seed.manual {
+			if err := cat.SetManualVideoTags(ctx, seed.id, nil); err != nil {
+				t.Fatalf("mark %s manual: %v", seed.id, err)
+			}
+		}
+	}
+
+	added, err := cat.EnsureTagForVideoIDPrefix(ctx, "spider91-91-spider-", "91porn", nil, "system")
+	if err != nil {
+		t.Fatalf("ensure prefix tag: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("added = %d, want 1", added)
+	}
+	got, err := cat.GetVideo(ctx, "spider91-91-spider-1200001")
+	if err != nil {
+		t.Fatalf("get tagged video: %v", err)
+	}
+	if !sameStrings(got.Tags, []string{"91porn"}) {
+		t.Fatalf("tagged video tags = %#v, want 91porn", got.Tags)
+	}
+	manual, err := cat.GetVideo(ctx, "spider91-91-spider-1200002")
+	if err != nil {
+		t.Fatalf("get manual video: %v", err)
+	}
+	if len(manual.Tags) != 0 {
+		t.Fatalf("manual video tags = %#v, want unchanged", manual.Tags)
+	}
+	other, err := cat.GetVideo(ctx, "spider91-other-1200003")
+	if err != nil {
+		t.Fatalf("get other prefix video: %v", err)
+	}
+	if len(other.Tags) != 0 {
+		t.Fatalf("other prefix video tags = %#v, want unchanged", other.Tags)
+	}
+}
+
 func TestDeleteTagRejectsSystemTags(t *testing.T) {
 	ctx := context.Background()
 	cat, err := Open(t.TempDir() + "/catalog.db")
@@ -934,6 +1003,98 @@ func TestListVideosHidesDuplicateContentHashes(t *testing.T) {
 	}
 	if items[0].ID != "video-1" {
 		t.Fatalf("visible id = %q, want video-1", items[0].ID)
+	}
+}
+
+func TestTagFilterMatchesCanonicalDuplicateVideo(t *testing.T) {
+	ctx := context.Background()
+	cat, err := Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, v := range []*Video{
+		{
+			ID:          "pikpak-canonical",
+			DriveID:     "pikpak",
+			FileID:      "canonical.mp4",
+			Title:       "Canonical",
+			Size:        1024,
+			PublishedAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "spider91-dup-1",
+			DriveID:     "91-spider",
+			FileID:      "dup-1.mp4",
+			Title:       "Spider duplicate 1",
+			Tags:        []string{"91porn"},
+			Size:        1024,
+			PublishedAt: now.Add(time.Second),
+			CreatedAt:   now.Add(time.Second),
+			UpdatedAt:   now.Add(time.Second),
+		},
+		{
+			ID:          "spider91-dup-2",
+			DriveID:     "91-spider",
+			FileID:      "dup-2.mp4",
+			Title:       "Spider duplicate 2",
+			Tags:        []string{"91porn"},
+			Size:        1024,
+			PublishedAt: now.Add(2 * time.Second),
+			CreatedAt:   now.Add(2 * time.Second),
+			UpdatedAt:   now.Add(2 * time.Second),
+		},
+		{
+			ID:          "spider91-visible",
+			DriveID:     "91-spider",
+			FileID:      "visible.mp4",
+			Title:       "Spider visible",
+			Tags:        []string{"91porn"},
+			Size:        2048,
+			PublishedAt: now.Add(3 * time.Second),
+			CreatedAt:   now.Add(3 * time.Second),
+			UpdatedAt:   now.Add(3 * time.Second),
+		},
+	} {
+		if err := cat.UpsertVideo(ctx, v); err != nil {
+			t.Fatalf("seed %s: %v", v.ID, err)
+		}
+	}
+	for _, id := range []string{"pikpak-canonical", "spider91-dup-1", "spider91-dup-2"} {
+		if err := cat.UpdateVideoFingerprint(ctx, id, "same-sampled-sha256", "ready", ""); err != nil {
+			t.Fatalf("fingerprint %s: %v", id, err)
+		}
+	}
+	if err := cat.UpdateVideoFingerprint(ctx, "spider91-visible", "unique-sampled-sha256", "ready", ""); err != nil {
+		t.Fatalf("fingerprint visible: %v", err)
+	}
+
+	items, total, err := cat.ListVideos(ctx, ListParams{Tag: "91porn", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list videos by tag: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("tagged videos total=%d len=%d, want 2", total, len(items))
+	}
+	gotIDs := map[string]bool{}
+	for _, item := range items {
+		gotIDs[item.ID] = true
+	}
+	for _, want := range []string{"pikpak-canonical", "spider91-visible"} {
+		if !gotIDs[want] {
+			t.Fatalf("tagged video ids = %#v, want %s", gotIDs, want)
+		}
+	}
+	if got := mustTagByLabel(t, ctx, cat, "91porn").Count; got != 2 {
+		t.Fatalf("91porn count = %d, want 2 visible canonical videos", got)
 	}
 }
 

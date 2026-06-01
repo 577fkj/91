@@ -853,12 +853,7 @@ func (c *Catalog) ListVideos(ctx context.Context, p ListParams) ([]*Video, int, 
 		args = append(args, p.DriveID)
 	}
 	if p.Tag != "" {
-		where = append(where, `EXISTS (
-			SELECT 1
-			FROM video_tags vt
-			JOIN tags t ON t.id = vt.tag_id
-			WHERE vt.video_id = videos.id AND t.label = ? COLLATE NOCASE
-		)`)
+		where = append(where, videoMatchesTagLabelSQL("videos"))
 		args = append(args, p.Tag)
 	}
 	if p.Category != "" && p.Category != "all" {

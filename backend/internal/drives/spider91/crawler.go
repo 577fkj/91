@@ -533,6 +533,17 @@ func (c *Crawler) processOne(ctx context.Context, videoID string, item spiderVid
 		}
 	}
 
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = sourceID
+	}
+	tags := []string{DefaultTag}
+	if matched, err := c.cfg.Catalog.MatchTags(ctx, title+" "+DefaultAuthor); err == nil {
+		tags = mergeCatalogTags(tags, matched)
+	} else {
+		log.Printf("[spider91] drive=%s viewkey=%s source_id=%s match tags: %v", c.cfg.Driver.ID(), viewkey, sourceID, err)
+	}
+
 	// 入库
 	now := time.Now()
 	v := &catalog.Video{
@@ -540,9 +551,9 @@ func (c *Crawler) processOne(ctx context.Context, videoID string, item spiderVid
 		DriveID:       c.cfg.Driver.ID(),
 		FileID:        videoFile,
 		FileName:      videoFile,
-		Title:         strings.TrimSpace(item.Title),
+		Title:         title,
 		Author:        DefaultAuthor,
-		Tags:          []string{DefaultTag},
+		Tags:          tags,
 		Ext:           strings.TrimPrefix(videoExt, "."),
 		Quality:       "HD",
 		Size:          videoSize,
@@ -550,9 +561,6 @@ func (c *Crawler) processOne(ctx context.Context, videoID string, item spiderVid
 		PublishedAt:   now,
 		CreatedAt:     now,
 		UpdatedAt:     now,
-	}
-	if v.Title == "" {
-		v.Title = sourceID
 	}
 	if thumbReady {
 		// 设了 ThumbnailURL 后 thumb worker 会跳过这条视频，
@@ -992,6 +1000,26 @@ func copyFileAtomic(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+func mergeCatalogTags(lists ...[]string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, list := range lists {
+		for _, tag := range list {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			key := strings.ToLower(tag)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 // BuildVideoID 给定 driveID + 91 源视频 ID，按统一规则生成 catalog 中 videos.id。
