@@ -577,19 +577,19 @@ export function DrivesPage() {
               <div className="admin-detail-actions">
                 <button
                   className="admin-btn"
-                  disabled={(d.teaserFailedCount ?? 0) <= 0 || regenFailedId === d.id}
-                  onClick={() => handleRegenFailed(d)}
-                >
-                  <RotateCcw size={13} />
-                  <span>重试失败 Teaser</span>
-                </button>
-                <button
-                  className="admin-btn"
                   disabled={(d.thumbnailFailedCount ?? 0) <= 0 || regenFailedThumbId === d.id}
                   onClick={() => handleRegenFailedThumbnails(d)}
                 >
                   <RotateCcw size={13} />
                   <span>重试失败封面</span>
+                </button>
+                <button
+                  className="admin-btn"
+                  disabled={(d.teaserFailedCount ?? 0) <= 0 || regenFailedId === d.id}
+                  onClick={() => handleRegenFailed(d)}
+                >
+                  <RotateCcw size={13} />
+                  <span>重试失败预览视频</span>
                 </button>
                 <button
                   className="admin-btn"
