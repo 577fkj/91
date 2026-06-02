@@ -463,7 +463,11 @@
  * Empty / Loading / Skeleton
  * ========================================================= */
 .video-grid-empty {
+  min-height: 220px;
   padding: var(--space-9) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: var(--text-muted);
   background: var(--bg-surface);
