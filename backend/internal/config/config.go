@@ -27,6 +27,7 @@ type Config struct {
 	Scanner Scanner `yaml:"scanner"`
 	Preview Preview `yaml:"preview"`
 	Nightly Nightly `yaml:"nightly"`
+	Plugins Plugins `yaml:"plugins"`
 	Drives  []Drive `yaml:"drives"`
 }
 
@@ -201,6 +202,13 @@ type Nightly struct {
 	CronHour int `yaml:"cron_hour"`
 	// MaxDuration 是单次流水线总耗时上限；默认 6h。
 	MaxDuration time.Duration `yaml:"max_duration"`
+}
+
+type Plugins struct {
+	// DriveDirs 是启动时扫描 HashiCorp go-plugin drive 可执行文件的目录列表。
+	// 目录里的插件会被注册为可复用 drive 类型；单个 drive 仍可通过 credentials.command
+	// 指向任意其它目录里的插件可执行文件。
+	DriveDirs []string `yaml:"drive_dirs"`
 }
 
 // Drive 配置项中的敏感字段（Cookie / RefreshToken 等）最终由管理后台写入 DB

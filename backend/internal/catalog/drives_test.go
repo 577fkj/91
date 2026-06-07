@@ -62,6 +62,7 @@ func TestUpsertDriveDefaultsRootIDByKind(t *testing.T) {
 		{id: "googledrive", kind: "googledrive", want: "root"},
 		{id: "localstorage", kind: "localstorage", want: "/"},
 		{id: "spider91", kind: "spider91", want: "/"},
+		{id: "plugin", kind: "plugin", want: ""},
 	}
 	for _, tc := range cases {
 		if err := cat.UpsertDrive(ctx, &Drive{

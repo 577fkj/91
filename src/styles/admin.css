@@ -2354,6 +2354,7 @@
 .admin-drive-type-card[data-kind="onedrive"]:hover { border-color: var(--drive-onedrive); box-shadow: 0 4px 18px rgba(76,171,234,.2); }
 .admin-drive-type-card[data-kind="googledrive"]:hover { border-color: #4285f4;            box-shadow: 0 4px 18px rgba(66,133,244,.2); }
 .admin-drive-type-card[data-kind="localstorage"]:hover { border-color: var(--drive-localstorage); box-shadow: 0 4px 18px rgba(53,184,143,.2); }
+.admin-drive-type-card[data-kind="plugin"]:hover { border-color: var(--drive-plugin); box-shadow: 0 4px 18px rgba(155,124,255,.2); }
 .admin-drive-type-card[data-kind="spider91"]:hover { border-color: var(--accent);         box-shadow: 0 4px 18px var(--accent-glow); }
 .admin-drive-type-card[data-kind="quark"]:hover   { border-color: var(--drive-quark);     box-shadow: 0 4px 18px rgba(91,141,239,.2); }
 .admin-drive-type-card[data-kind="wopan"]:hover   { border-color: var(--drive-wopan);     box-shadow: 0 4px 18px rgba(255,138,60,.2); }
@@ -2379,6 +2380,7 @@
 .admin-drive-type-card__icon[data-kind="onedrive"]    { background: rgba(76,171,234,.14);  color: var(--drive-onedrive); }
 .admin-drive-type-card__icon[data-kind="googledrive"] { background: rgba(66,133,244,.14);  color: #4285f4; }
 .admin-drive-type-card__icon[data-kind="localstorage"]{ background: rgba(53,184,143,.14);  color: var(--drive-localstorage); }
+.admin-drive-type-card__icon[data-kind="plugin"]      { background: rgba(155,124,255,.14); color: var(--drive-plugin); }
 .admin-drive-type-card__icon[data-kind="spider91"]    { background: var(--accent-soft);    color: var(--accent); }
 .admin-drive-type-card__icon[data-kind="quark"]       { background: rgba(91,141,239,.14);  color: var(--drive-quark); }
 .admin-drive-type-card__icon[data-kind="wopan"]       { background: rgba(255,138,60,.14);  color: var(--drive-wopan); }
@@ -2437,6 +2439,7 @@
 .admin-drive-selected-bar__icon[data-kind="onedrive"]    { background: rgba(76,171,234,.14);  color: var(--drive-onedrive); }
 .admin-drive-selected-bar__icon[data-kind="googledrive"] { background: rgba(66,133,244,.14);  color: #4285f4; }
 .admin-drive-selected-bar__icon[data-kind="localstorage"]{ background: rgba(53,184,143,.14);  color: var(--drive-localstorage); }
+.admin-drive-selected-bar__icon[data-kind="plugin"]      { background: rgba(155,124,255,.14); color: var(--drive-plugin); }
 .admin-drive-selected-bar__icon[data-kind="spider91"]    { background: var(--accent-soft);    color: var(--accent); }
 .admin-drive-selected-bar__icon[data-kind="quark"]       { background: rgba(91,141,239,.14);  color: var(--drive-quark); }
 .admin-drive-selected-bar__icon[data-kind="wopan"]       { background: rgba(255,138,60,.14);  color: var(--drive-wopan); }
@@ -2984,6 +2987,7 @@
 .admin-drive-card__brand-icon[data-kind="wopan"] { background: var(--drive-wopan); }
 .admin-drive-card__brand-icon[data-kind="onedrive"] { background: var(--drive-onedrive); }
 .admin-drive-card__brand-icon[data-kind="localstorage"] { background: var(--drive-localstorage); }
+.admin-drive-card__brand-icon[data-kind="plugin"] { background: var(--drive-plugin); }
 .admin-drive-card__brand-icon[data-kind="spider91"] { background: var(--accent); }
 
 .admin-drive-card__info {

@@ -1682,6 +1682,8 @@ func normalizeDriveRootID(kind, rootID string) string {
 		return rootID
 	case "localstorage", "spider91":
 		return "/"
+	case "plugin":
+		return rootID
 	default:
 		if rootID == "" {
 			return "0"

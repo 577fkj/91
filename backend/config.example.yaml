@@ -45,6 +45,14 @@ nightly:
   # 单次流水线总耗时上限（软超时）；超过后当前 phase 跑完不启动后续 phase。
   max_duration: 6h
 
+plugins:
+  # 启动时扫描这些目录下的 HashiCorp go-plugin drive 可执行文件。
+  # 扫描成功后，可把 drive 的 kind 直接设为插件 Info.Kind，或在 kind=plugin 时
+  # 通过 params.plugin / params.plugin_kind 引用该插件。
+  # 也可以在单个 drive 的 params.command 中填写其它目录的插件路径。
+  drive_dirs:
+    - "./plugins/drives"
+
 preview:
   # 是否启用 ffmpeg 抽帧生成预览视频
   enabled: true
@@ -59,7 +67,7 @@ preview:
   width: 480
 
 # 盘列表。上线后请通过管理后台添加，本文件可留空。
-# kind 支持 quark / p115 / p123 / pikpak / wopan / onedrive / googledrive / localstorage。
+# kind 支持 quark / p115 / p123 / pikpak / wopan / onedrive / googledrive / localstorage / plugin。
 # OneDrive 示例：
 # - id: "my-onedrive"
 #   kind: "onedrive"
@@ -83,4 +91,26 @@ preview:
 #     # Docker 部署时这里和 .strm 里的绝对路径都必须使用容器内路径。
 #     # 例如宿主机 /mnt/videos 挂载为 /media，就填写 /media。
 #     path: "/mnt/videos"
+# HashiCorp go-plugin drive 示例：
+# - id: "my-plugin-drive"
+#   kind: "plugin"
+#   name: "自定义 Drive 插件"
+#   root_id: "root"
+#   params:
+#     # 插件可执行文件路径；Docker 部署时使用容器内路径。
+#     command: "/opt/video-site/plugins/my-drive-plugin"
+#     # 可选：JSON 数组格式参数，适合包含空格的路径。
+#     args: '["--config","/opt/video-site/plugins/my-drive.json"]'
+#     # 可选：传给插件 Config.Kind；为空时默认 plugin。
+#     plugin_kind: "mydrive"
+#     # 可选：额外参数会传给插件 Config.Params。
+#     params_json: '{"endpoint":"https://storage.example","bucket":"videos"}'
+# 已注册插件示例（插件来自 plugins.drive_dirs）：
+# - id: "my-registered-drive"
+#   kind: "plugin"
+#   name: "已注册插件 Drive"
+#   root_id: "root"
+#   params:
+#     plugin: "mydrive"
+#     params_json: '{"endpoint":"https://storage.example","bucket":"videos"}'
 drives: []

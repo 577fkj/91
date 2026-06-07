@@ -2,7 +2,7 @@
 
 视频聚合站的 Go 后端。提供三件事：
 
-1. 多家网盘统一抽象（夸克 / 115 / PikPak / 联通沃盘 / OneDrive / Google Drive / 本地存储）
+1. 多家网盘统一抽象（夸克 / 115 / PikPak / 联通沃盘 / OneDrive / Google Drive / 本地存储 / 自定义插件）
 2. 视频元数据目录（SQLite）+ 扫描 + 预览视频预生成
 3. REST API（前台）+ 管理后台 + 直链代理
 4. 标签池、视频隐藏、按网盘统计和详情页来源网盘类型展示能力
@@ -23,6 +23,8 @@ internal/
     onedrive/               OneDrive（OpenList 在线续期 + Microsoft Graph 文件接口）
     googledrive/            Google Drive（OpenList 在线续期 + Google Drive API；播放走后端代理）
     localstorage/           本地目录扫描（服务器已有视频目录）
+pkg/
+  driveplugin/              HashiCorp go-plugin 公共协议
   scanner/                  扫目录 → 落库
   preview/                  ffmpeg 抽封面和生成多段预览视频
   proxy/                    /p/stream/*、/p/preview/* 代理
@@ -111,6 +113,68 @@ go run ./cmd/server 后端 9192
 | onedrive | `refresh_token` |
 | googledrive | `refresh_token` |
 | localstorage | `path`（服务器上的已有视频目录，如 `/mnt/videos`） |
+| plugin | `command`，可选 `args`、`plugin_kind`、`params_json` |
+
+### 自定义 Drive 插件
+
+后端支持通过 HashiCorp go-plugin 接入外部 drive 可执行文件。插件实现 `github.com/video-site/backend/pkg/driveplugin.Driver`，入口调用 `driveplugin.Serve(&Driver{})`。需要启动目录扫描注册的插件还应实现 `Info(ctx)`，返回稳定的 `Kind`。
+
+启动扫描目录：
+
+```yaml
+plugins:
+  drive_dirs:
+    - "./plugins/drives"
+```
+
+目录里的每个插件进程会被启动一次读取 `Info()`，并按 `Info.Kind` 注册。一个插件类型可以创建多个 drive 实例，每个 drive 会启动独立插件进程。
+
+内置静态直链示例：
+
+```bash
+cd backend
+go build -o ./data/plugins/static-drive ./examples/driveplugin/static
+```
+
+管理后台或 API 新增 `kind=plugin`：
+
+```json
+{
+  "id": "demo-plugin",
+  "kind": "plugin",
+  "name": "静态直链插件",
+  "rootId": "root",
+  "credentials": {
+    "command": "./data/plugins/static-drive",
+    "plugin_kind": "staticdrive",
+    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"size\":1048576,\"tags\":\"Demo,Plugin\"}"
+  }
+}
+```
+
+引用启动时已注册的插件：
+
+```json
+{
+  "id": "demo-registered",
+  "kind": "plugin",
+  "name": "已注册插件",
+  "rootId": "root",
+  "credentials": {
+    "plugin": "staticdrive",
+    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"size\":1048576}"
+  }
+}
+```
+
+字段说明：
+
+- `command`：插件可执行文件路径。
+- `plugin` / `plugin_id`：引用启动时从 `plugins.drive_dirs` 注册的插件。
+- `args`：可选参数，支持空格分隔字符串或 JSON 数组字符串。
+- `plugin_kind`：有 `command` 时传给插件 `Config.Kind`；无 `command` 时也可作为已注册插件引用。
+- `params_json`：JSON 对象，内容会合并进插件 `Config.Params`。
+- 可选能力：实现 `EntryTags` 可为扫描到的视频提供标签；实现 `StreamURLWithHeader` 可按请求头生成直链。
 
 ### PikPak 速度说明
 

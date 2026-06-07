@@ -77,5 +77,6 @@ function sourceKindFromLabel(label: string): string {
   if (value.includes("onedrive") || value.includes("one drive")) return "onedrive";
   if (value.includes("本地") || value.includes("localstorage") || value.includes("local storage"))
     return "localstorage";
+  if (value.includes("plugin") || value.includes("插件")) return "plugin";
   return "";
 }

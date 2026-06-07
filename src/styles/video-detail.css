@@ -660,6 +660,12 @@
   color: var(--drive-localstorage);
 }
 
+.vd-meta__chip[data-tone="plugin"] {
+  background: rgba(155, 124, 255, 0.14);
+  border-color: rgba(155, 124, 255, 0.3);
+  color: var(--drive-plugin);
+}
+
 /* ---------- Actions toolbar ---------- */
 .vd-actions {
   display: flex;

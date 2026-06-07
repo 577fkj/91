@@ -24,6 +24,7 @@ import (
 	"github.com/video-site/backend/internal/catalog"
 	"github.com/video-site/backend/internal/drives/localstorage"
 	"github.com/video-site/backend/internal/drives/localupload"
+	"github.com/video-site/backend/internal/drives/pluginhost"
 	"github.com/video-site/backend/internal/drives/spider91"
 	"github.com/video-site/backend/internal/mediaasset"
 	"github.com/video-site/backend/internal/proxy"
@@ -1005,6 +1006,8 @@ func driveKindLabel(kind string) string {
 		return "Google Drive"
 	case localstorage.Kind:
 		return "本地存储"
+	case pluginhost.Kind:
+		return "Drive 插件"
 	case spider91.Kind:
 		return "91 爬虫"
 	default:

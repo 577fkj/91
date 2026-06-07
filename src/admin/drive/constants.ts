@@ -1,4 +1,4 @@
-export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "onedrive" | "googledrive" | "localstorage" | "spider91";
+export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "onedrive" | "googledrive" | "localstorage" | "plugin" | "spider91";
 
 export const kindAbbr: Record<string, string> = {
   quark: "Qk",
@@ -9,6 +9,7 @@ export const kindAbbr: Record<string, string> = {
   onedrive: "OD",
   googledrive: "GD",
   localstorage: "Lo",
+  plugin: "Pl",
   spider91: "91",
 };
 
@@ -21,6 +22,7 @@ export const kindLabel: Record<string, string> = {
   onedrive: "OneDrive",
   googledrive: "Google Drive",
   localstorage: "本地存储",
+  plugin: "Drive 插件",
   spider91: "91 爬虫",
 };
 
@@ -117,6 +119,7 @@ export function defaultRootId(kind: Kind): string {
   if (kind === "onedrive") return "root";
   if (kind === "googledrive") return "root";
   if (kind === "localstorage") return "/";
+  if (kind === "plugin") return "";
   if (kind === "spider91") return "/";
   return "0";
 }
@@ -149,6 +152,8 @@ export function credentialHelp(kind: Kind, isEdit: boolean): string {
       return `按 OpenList 在线 API 挂载，只需要 Google Drive refresh_token；保存时会自动刷新并保存 token。播放不走 302，会由后端带 Authorization 代理转发。${note}`;
     case "localstorage":
       return `填写服务器可访问的本地目录绝对路径，例如 /mnt/videos。系统会扫描该目录及子目录中的视频文件和 .strm 文件；.strm 可指向 HTTP/HTTPS 直链，或指向本地存储根目录内的真实视频路径。Docker 部署时请填写容器内路径。${note}`;
+    case "plugin":
+      return `填写 HashiCorp go-plugin drive 可执行文件路径，或引用后端启动时从 plugins.drive_dirs 扫描注册的插件。插件实现 backend/pkg/driveplugin.Driver。${note}`;
     case "spider91":
       return "91 爬虫会把定时抓取到的视频和封面先保存到本机，并作为一个视频来源接入站点；可按服务器网络情况单独配置代理。后续流水线会把较早的视频上传到你选择的 115 / PikPak / OneDrive 目标盘。";
     default:
@@ -268,6 +273,40 @@ export function credentialFields(kind: Kind): Array<{
           placeholder: "/mnt/videos",
           required: true,
           help: "路径必须是后端服务器上的已有目录；保存后可手动重扫，系统会递归扫描支持的视频格式。",
+        },
+      ];
+    case "plugin":
+      return [
+        {
+          key: "plugin",
+          label: "已注册插件（可选）",
+          placeholder: "mydrive",
+          help: "填写插件 Info.Kind 或 Info.ID；用于引用 plugins.drive_dirs 里启动扫描到的插件。",
+        },
+        {
+          key: "command",
+          label: "插件可执行文件（可选）",
+          placeholder: "/opt/video-site/plugins/my-drive-plugin",
+          help: "填写后端服务器可执行的插件路径；用于加载其它目录里的单个插件。Docker 部署时使用容器内路径。",
+        },
+        {
+          key: "args",
+          label: "启动参数（可选）",
+          placeholder: `["--config","/opt/video-site/plugins/my-drive.json"]`,
+          help: "支持空格分隔字符串或 JSON 数组字符串。",
+        },
+        {
+          key: "plugin_kind",
+          label: "插件类型 / 引用名（可选）",
+          placeholder: "mydrive",
+          help: "有插件路径时传给 Config.Kind；未填插件路径时也可引用已注册插件。",
+        },
+        {
+          key: "params_json",
+          label: "插件参数 JSON（可选）",
+          placeholder: `{"endpoint":"https://storage.example","bucket":"videos"}`,
+          multiline: true,
+          help: "JSON 对象会合并到插件 Config.Params。",
         },
       ];
     case "spider91":

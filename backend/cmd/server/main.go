@@ -32,6 +32,7 @@ import (
 	"github.com/video-site/backend/internal/drives/p115"
 	"github.com/video-site/backend/internal/drives/p123"
 	"github.com/video-site/backend/internal/drives/pikpak"
+	"github.com/video-site/backend/internal/drives/pluginhost"
 	"github.com/video-site/backend/internal/drives/quark"
 	"github.com/video-site/backend/internal/drives/spider91"
 	"github.com/video-site/backend/internal/drives/wopan"
@@ -69,10 +70,22 @@ func main() {
 	}
 	defer cat.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	drivePlugins := pluginhost.NewRegistry()
+	if err := drivePlugins.Discover(ctx, drivePluginDirs(cfgPath, cfg)); err != nil {
+		log.Printf("[drive-plugin] discover: %v", err)
+	}
+	for _, def := range drivePlugins.List() {
+		log.Printf("[drive-plugin] registered kind=%s id=%s command=%s", def.Kind, def.ID, def.Command)
+	}
+
 	app := &App{
 		cfg:                cfg,
 		cat:                cat,
 		registry:           proxy.NewRegistry(),
+		drivePlugins:       drivePlugins,
 		workers:            make(map[string]*preview.Worker),
 		thumbWorkers:       make(map[string]*preview.ThumbWorker),
 		fingerprintWorkers: make(map[string]*fingerprint.Worker),
@@ -88,9 +101,6 @@ func main() {
 
 	// 初始化本地内置盘；外部云盘放到 HTTP 服务启动后异步挂载，避免上游
 	// 登录态校验拖慢端口监听。
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	app.loadTheme(ctx)
 	app.loadSpider91UploadDriveID(ctx)
 	if removed, err := app.cleanupOrphanDriveVideos(ctx); err != nil {
@@ -299,6 +309,8 @@ type App struct {
 	cat      *catalog.Catalog
 	registry *proxy.Registry
 	proxy    *proxy.Proxy
+	// drivePlugins holds HashiCorp go-plugin drive types discovered at startup.
+	drivePlugins *pluginhost.Registry
 
 	mu                 sync.Mutex
 	workers            map[string]*preview.Worker
@@ -603,8 +615,23 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 		return errors.New("nil drive")
 	}
 	var drv drives.Drive
-	switch d.Kind {
-	case "quark":
+	var err error
+	if a.drivePlugins != nil {
+		if def, ok := a.drivePlugins.Get(d.Kind); ok {
+			pluginCfg, cfgErr := pluginhost.ConfigFromCredentials(d.ID, d.RootID, d.Credentials)
+			if cfgErr != nil {
+				return cfgErr
+			}
+			pluginCfg.Kind = d.Kind
+			drv, err = pluginhost.NewFromDefinition(ctx, def, pluginCfg)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	switch {
+	case drv != nil:
+	case d.Kind == "quark":
 		drv = quark.New(quark.Config{
 			ID:     d.ID,
 			Cookie: d.Credentials["cookie"],
@@ -614,13 +641,13 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case "p115":
+	case d.Kind == "p115":
 		drv = p115.New(p115.Config{
 			ID:     d.ID,
 			Cookie: d.Credentials["cookie"],
 			RootID: d.RootID,
 		})
-	case p123.Kind:
+	case d.Kind == p123.Kind:
 		drv = p123.New(p123.Config{
 			ID:          d.ID,
 			Username:    d.Credentials["username"],
@@ -636,7 +663,7 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case "pikpak":
+	case d.Kind == "pikpak":
 		drv = pikpak.New(pikpak.Config{
 			ID:               d.ID,
 			Username:         d.Credentials["username"],
@@ -656,7 +683,7 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case "wopan":
+	case d.Kind == "wopan":
 		drv = wopan.New(wopan.Config{
 			ID:           d.ID,
 			AccessToken:  d.Credentials["access_token"],
@@ -669,7 +696,7 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case "onedrive":
+	case d.Kind == "onedrive":
 		drv = onedrive.New(onedrive.Config{
 			ID:           d.ID,
 			RootID:       d.RootID,
@@ -688,7 +715,7 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case googledrive.Kind:
+	case d.Kind == googledrive.Kind:
 		drv = googledrive.New(googledrive.Config{
 			ID:           d.ID,
 			RootID:       d.RootID,
@@ -709,12 +736,32 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 				_ = a.cat.UpsertDrive(ctx, d)
 			},
 		})
-	case localstorage.Kind:
+	case d.Kind == localstorage.Kind:
 		drv = localstorage.New(localstorage.Config{
 			ID:       d.ID,
 			RootPath: d.Credentials["path"],
 		})
-	case spider91.Kind:
+	case d.Kind == pluginhost.Kind:
+		pluginCfg, cfgErr := pluginhost.ConfigFromCredentials(d.ID, d.RootID, d.Credentials)
+		if cfgErr != nil {
+			return cfgErr
+		}
+		if pluginCfg.Command == "" {
+			if a.drivePlugins == nil {
+				return fmt.Errorf("drive plugin registry is not initialized")
+			}
+			def, ok := a.drivePlugins.Get(pluginCfg.Plugin)
+			if !ok {
+				return fmt.Errorf("drive plugin %q not registered", pluginCfg.Plugin)
+			}
+			drv, err = pluginhost.NewFromDefinition(ctx, def, pluginCfg)
+		} else {
+			drv, err = pluginhost.New(ctx, pluginCfg)
+		}
+		if err != nil {
+			return err
+		}
+	case d.Kind == spider91.Kind:
 		drv = spider91.New(spider91.Config{
 			ID:      d.ID,
 			RootDir: a.spider91DriveDir(d.ID),
@@ -727,6 +774,7 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 		d.Status = "error"
 		d.LastError = err.Error()
 		_ = a.cat.UpsertDrive(ctx, d)
+		closeDrive(drv)
 		return err
 	}
 
@@ -734,9 +782,13 @@ func (a *App) attachDriveUnlocked(ctx context.Context, d *catalog.Drive) error {
 	d.LastError = ""
 	_ = a.cat.UpsertDrive(ctx, d)
 
+	oldDrv, hadOld := a.registry.Get(d.ID)
 	a.registry.Set(d.ID, drv)
 
 	a.startDriveGenerationWorkers(ctx, d.ID, drv, true)
+	if hadOld && oldDrv != drv {
+		closeDrive(oldDrv)
+	}
 
 	// spider91 driver 还需要一个 crawler，挂在专用 map 里供 crawlerLoop 调用
 	if sd, ok := drv.(*spider91.Driver); ok {
@@ -1290,6 +1342,7 @@ func (a *App) detachDrive(id string) {
 	a.cancelDriveTaskContexts(id)
 	a.clearQueuedDriveTask(id)
 	a.clearFingerprintQueueing(id)
+	drv, hadDrive := a.registry.Get(id)
 	a.registry.Remove(id)
 	a.mu.Lock()
 	if cancel, ok := a.cancels[id]; ok {
@@ -1301,6 +1354,17 @@ func (a *App) detachDrive(id string) {
 	delete(a.fingerprintWorkers, id)
 	delete(a.spider91Crawlers, id)
 	a.mu.Unlock()
+	if hadDrive {
+		closeDrive(drv)
+	}
+}
+
+func closeDrive(drv drives.Drive) {
+	if closer, ok := drv.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			log.Printf("[drive] close %s: %v", drv.ID(), err)
+		}
+	}
 }
 
 // listDriveDirChildren 实现 AdminServer.ListDriveDirChildren：
@@ -2586,4 +2650,41 @@ func parseBoolDefault(raw string, def bool) bool {
 		return def
 	}
 	return v
+}
+
+func drivePluginDirs(cfgPath string, cfg *config.Config) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(dir string) {
+		dir = strings.TrimSpace(os.ExpandEnv(dir))
+		if dir == "" {
+			return
+		}
+		if !filepath.IsAbs(dir) && strings.TrimSpace(cfgPath) != "" {
+			dir = filepath.Join(filepath.Dir(cfgPath), dir)
+		}
+		clean, err := filepath.Abs(dir)
+		if err != nil {
+			clean = filepath.Clean(dir)
+		}
+		if _, ok := seen[clean]; ok {
+			return
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	if cfg != nil {
+		for _, dir := range cfg.Plugins.DriveDirs {
+			add(dir)
+		}
+	}
+	if env := strings.TrimSpace(os.Getenv("VIDEO_DRIVE_PLUGIN_DIRS")); env != "" {
+		for _, dir := range filepath.SplitList(env) {
+			add(dir)
+		}
+	}
+	if len(out) == 0 {
+		add("./plugins/drives")
+	}
+	return out
 }

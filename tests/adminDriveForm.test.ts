@@ -170,10 +170,21 @@ test("drive type selector keeps primary source order", () => {
     { value: "onedrive", label: "OneDrive" },
     { value: "googledrive", label: "Google Drive" },
     { value: "localstorage", label: "本地存储" },
+    { value: "plugin", label: "Drive 插件" },
     { value: "spider91", label: "91 爬虫" },
     { value: "quark", label: "夸克网盘" },
     { value: "wopan", label: "联通沃盘" },
   ]);
+});
+
+test("plugin drive form exposes go-plugin fields", () => {
+  assertDriveTypeOption("plugin", "Drive 插件");
+  assert.match(combinedSource, /key: "plugin"/);
+  assert.match(combinedSource, /key: "command"/);
+  assert.match(combinedSource, /label: "插件可执行文件（可选）"/);
+  assert.match(combinedSource, /key: "plugin_kind"/);
+  assert.match(combinedSource, /key: "params_json"/);
+  assert.match(combinedSource, /HashiCorp go-plugin/);
 });
 
 test("drive management exposes stop task controls", () => {
