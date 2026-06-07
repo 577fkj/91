@@ -43,6 +43,7 @@ type Drive interface {
 type Entry struct {
 	ID       string
 	Name     string
+	Title    string
 	Size     int64
 	Hash     string
 	IsDir    bool
@@ -59,6 +60,12 @@ type Entry struct {
 // 读取该文件的外部标签，并合并保存为视频自动标签。
 type EntryTagProvider interface {
 	EntryTags(ctx context.Context, entry Entry) ([]string, error)
+}
+
+// EntryTitleProvider 是 Drive 的可选能力。实现后，扫描器会优先使用该标题
+// 作为视频展示标题。
+type EntryTitleProvider interface {
+	EntryTitle(ctx context.Context, entry Entry) (string, error)
 }
 
 type StreamLink struct {

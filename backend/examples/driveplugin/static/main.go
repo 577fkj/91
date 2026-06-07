@@ -53,6 +53,7 @@ func (d *Driver) Configure(_ context.Context, cfg driveplugin.Config) error {
 	d.entry = driveplugin.Entry{
 		ID:       fileID,
 		Name:     name,
+		Title:    strings.TrimSpace(cfg.Params["title"]),
 		Size:     size,
 		Hash:     strings.TrimSpace(cfg.Params["hash"]),
 		ParentID: d.rootID,
@@ -130,4 +131,8 @@ func (d *Driver) EnsureDir(context.Context, string) (string, error) {
 
 func (d *Driver) EntryTags(context.Context, driveplugin.Entry) ([]string, error) {
 	return append([]string{}, d.tags...), nil
+}
+
+func (d *Driver) EntryTitle(context.Context, driveplugin.Entry) (string, error) {
+	return d.entry.Title, nil
 }

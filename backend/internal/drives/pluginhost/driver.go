@@ -234,6 +234,10 @@ type entryTagsProvider interface {
 	EntryTags(ctx context.Context, entry driveplugin.Entry) ([]string, error)
 }
 
+type entryTitleProvider interface {
+	EntryTitle(ctx context.Context, entry driveplugin.Entry) (string, error)
+}
+
 type streamURLWithHeaderProvider interface {
 	StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*driveplugin.StreamLink, error)
 }
@@ -329,10 +333,18 @@ func newWithCommand(ctx context.Context, cfg Config, command string, args []stri
 		}
 	}
 	switch {
+	case caps.EntryTags && caps.EntryTitle && caps.StreamURLWithHeader:
+		return &taggedTitledStreamDriver{baseDriver: base}, nil
+	case caps.EntryTags && caps.EntryTitle:
+		return &taggedTitledDriver{baseDriver: base}, nil
 	case caps.EntryTags && caps.StreamURLWithHeader:
 		return &taggedStreamDriver{baseDriver: base}, nil
+	case caps.EntryTitle && caps.StreamURLWithHeader:
+		return &titledStreamDriver{baseDriver: base}, nil
 	case caps.EntryTags:
 		return &taggedDriver{baseDriver: base}, nil
+	case caps.EntryTitle:
+		return &titledDriver{baseDriver: base}, nil
 	case caps.StreamURLWithHeader:
 		return &streamDriver{baseDriver: base}, nil
 	default:
@@ -462,7 +474,31 @@ type taggedDriver struct {
 }
 
 func (d *taggedDriver) EntryTags(ctx context.Context, entry drives.Entry) ([]string, error) {
-	provider, ok := d.remote.(entryTagsProvider)
+	return entryTags(ctx, d.remote, entry)
+}
+
+type titledDriver struct {
+	*baseDriver
+}
+
+func (d *titledDriver) EntryTitle(ctx context.Context, entry drives.Entry) (string, error) {
+	return entryTitle(ctx, d.remote, entry)
+}
+
+type taggedTitledDriver struct {
+	*baseDriver
+}
+
+func (d *taggedTitledDriver) EntryTags(ctx context.Context, entry drives.Entry) ([]string, error) {
+	return entryTags(ctx, d.remote, entry)
+}
+
+func (d *taggedTitledDriver) EntryTitle(ctx context.Context, entry drives.Entry) (string, error) {
+	return entryTitle(ctx, d.remote, entry)
+}
+
+func entryTags(ctx context.Context, remote driveplugin.Driver, entry drives.Entry) ([]string, error) {
+	provider, ok := remote.(entryTagsProvider)
 	if !ok {
 		return nil, nil
 	}
@@ -471,6 +507,18 @@ func (d *taggedDriver) EntryTags(ctx context.Context, entry drives.Entry) ([]str
 		return nil, mapPluginError(err)
 	}
 	return tags, nil
+}
+
+func entryTitle(ctx context.Context, remote driveplugin.Driver, entry drives.Entry) (string, error) {
+	provider, ok := remote.(entryTitleProvider)
+	if !ok {
+		return "", nil
+	}
+	title, err := provider.EntryTitle(ctx, toPluginEntry(entry))
+	if err != nil {
+		return "", mapPluginError(err)
+	}
+	return title, nil
 }
 
 type streamDriver struct {
@@ -494,18 +542,54 @@ type taggedStreamDriver struct {
 }
 
 func (d *taggedStreamDriver) EntryTags(ctx context.Context, entry drives.Entry) ([]string, error) {
-	provider, ok := d.remote.(entryTagsProvider)
-	if !ok {
-		return nil, nil
-	}
-	tags, err := provider.EntryTags(ctx, toPluginEntry(entry))
-	if err != nil {
-		return nil, mapPluginError(err)
-	}
-	return tags, nil
+	return entryTags(ctx, d.remote, entry)
 }
 
 func (d *taggedStreamDriver) StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*drives.StreamLink, error) {
+	provider, ok := d.remote.(streamURLWithHeaderProvider)
+	if !ok {
+		return d.StreamURL(ctx, fileID)
+	}
+	link, err := provider.StreamURLWithHeader(ctx, fileID, header)
+	if err != nil {
+		return nil, mapPluginError(err)
+	}
+	return fromPluginStreamLink(link), nil
+}
+
+type titledStreamDriver struct {
+	*baseDriver
+}
+
+func (d *titledStreamDriver) EntryTitle(ctx context.Context, entry drives.Entry) (string, error) {
+	return entryTitle(ctx, d.remote, entry)
+}
+
+func (d *titledStreamDriver) StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*drives.StreamLink, error) {
+	provider, ok := d.remote.(streamURLWithHeaderProvider)
+	if !ok {
+		return d.StreamURL(ctx, fileID)
+	}
+	link, err := provider.StreamURLWithHeader(ctx, fileID, header)
+	if err != nil {
+		return nil, mapPluginError(err)
+	}
+	return fromPluginStreamLink(link), nil
+}
+
+type taggedTitledStreamDriver struct {
+	*baseDriver
+}
+
+func (d *taggedTitledStreamDriver) EntryTags(ctx context.Context, entry drives.Entry) ([]string, error) {
+	return entryTags(ctx, d.remote, entry)
+}
+
+func (d *taggedTitledStreamDriver) EntryTitle(ctx context.Context, entry drives.Entry) (string, error) {
+	return entryTitle(ctx, d.remote, entry)
+}
+
+func (d *taggedTitledStreamDriver) StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*drives.StreamLink, error) {
 	provider, ok := d.remote.(streamURLWithHeaderProvider)
 	if !ok {
 		return d.StreamURL(ctx, fileID)
@@ -521,6 +605,7 @@ func fromPluginEntry(e driveplugin.Entry) drives.Entry {
 	return drives.Entry{
 		ID:           e.ID,
 		Name:         e.Name,
+		Title:        e.Title,
 		Size:         e.Size,
 		Hash:         e.Hash,
 		IsDir:        e.IsDir,
@@ -536,6 +621,7 @@ func toPluginEntry(e drives.Entry) driveplugin.Entry {
 	return driveplugin.Entry{
 		ID:           e.ID,
 		Name:         e.Name,
+		Title:        e.Title,
 		Size:         e.Size,
 		Hash:         e.Hash,
 		IsDir:        e.IsDir,
@@ -658,3 +744,4 @@ func splitArgs(raw string) ([]string, error) {
 
 var _ drives.Drive = (*baseDriver)(nil)
 var _ drives.EntryTagProvider = (*taggedDriver)(nil)
+var _ drives.EntryTitleProvider = (*titledDriver)(nil)

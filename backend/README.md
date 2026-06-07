@@ -147,7 +147,7 @@ go build -o ./data/plugins/static-drive ./examples/driveplugin/static
   "credentials": {
     "command": "./data/plugins/static-drive",
     "plugin_kind": "staticdrive",
-    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"size\":1048576,\"tags\":\"Demo,Plugin\"}"
+    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"title\":\"Sample title from drive\",\"size\":1048576,\"tags\":\"Demo,Plugin\"}"
   }
 }
 ```
@@ -162,7 +162,7 @@ go build -o ./data/plugins/static-drive ./examples/driveplugin/static
   "rootId": "root",
   "credentials": {
     "plugin": "staticdrive",
-    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"size\":1048576}"
+    "params_json": "{\"url\":\"https://media.example/sample.mp4\",\"name\":\"sample.mp4\",\"title\":\"Sample title from drive\",\"size\":1048576}"
   }
 }
 ```
@@ -174,7 +174,7 @@ go build -o ./data/plugins/static-drive ./examples/driveplugin/static
 - `args`：可选参数，支持空格分隔字符串或 JSON 数组字符串。
 - `plugin_kind`：有 `command` 时传给插件 `Config.Kind`；无 `command` 时也可作为已注册插件引用。
 - `params_json`：JSON 对象，内容会合并进插件 `Config.Params`。
-- 可选能力：实现 `EntryTags` 可为扫描到的视频提供标签；实现 `StreamURLWithHeader` 可按请求头生成直链。
+- 可选能力：在 `Entry.Title` 里返回视频标题，或实现 `EntryTitle` 动态提供标题；实现 `EntryTags` 可为扫描到的视频提供标签；实现 `StreamURLWithHeader` 可按请求头生成直链。
 
 ### PikPak 速度说明
 

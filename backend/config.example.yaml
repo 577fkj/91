@@ -104,7 +104,7 @@ preview:
 #     # 可选：传给插件 Config.Kind；为空时默认 plugin。
 #     plugin_kind: "mydrive"
 #     # 可选：额外参数会传给插件 Config.Params。
-#     params_json: '{"endpoint":"https://storage.example","bucket":"videos"}'
+#     params_json: '{"endpoint":"https://storage.example","bucket":"videos","title":"Sample title from drive"}'
 # 已注册插件示例（插件来自 plugins.drive_dirs）：
 # - id: "my-registered-drive"
 #   kind: "plugin"
@@ -112,5 +112,5 @@ preview:
 #   root_id: "root"
 #   params:
 #     plugin: "mydrive"
-#     params_json: '{"endpoint":"https://storage.example","bucket":"videos"}'
+#     params_json: '{"endpoint":"https://storage.example","bucket":"videos","title":"Sample title from drive"}'
 drives: []

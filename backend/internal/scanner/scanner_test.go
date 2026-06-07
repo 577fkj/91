@@ -56,6 +56,124 @@ func TestRunIgnoresRemoteThumbnailFromDriveEntry(t *testing.T) {
 	}
 }
 
+func TestRunUsesDriveEntryTitle(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	drv := &scannerFakeDrive{
+		entries: []drives.Entry{{
+			ID:    "file-1",
+			Name:  "clip.mp4",
+			Title: "Remote Video Title",
+			Size:  123,
+		}},
+	}
+	sc := New(cat, drv, []string{".mp4"}, nil, nil)
+
+	if _, err := sc.Run(ctx, ""); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got, err := cat.GetVideo(ctx, "fake-drive-file-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Title != "Remote Video Title" {
+		t.Fatalf("title = %q, want drive entry title", got.Title)
+	}
+}
+
+func TestRunUsesDriveEntryTitleProvider(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	drv := &scannerTitleFakeDrive{
+		scannerFakeDrive: scannerFakeDrive{
+			entries: []drives.Entry{{
+				ID:    "file-1",
+				Name:  "clip.mp4",
+				Title: "Entry Title",
+				Size:  123,
+			}},
+		},
+		titlesByID: map[string]string{"file-1": "Provider Title"},
+	}
+	sc := New(cat, drv, []string{".mp4"}, nil, nil)
+
+	if _, err := sc.Run(ctx, ""); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got, err := cat.GetVideo(ctx, "fake-drive-file-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Title != "Provider Title" {
+		t.Fatalf("title = %q, want provider title", got.Title)
+	}
+}
+
+func TestRunUpdatesExistingFilenameTitleWhenDriveTitleAppears(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	now := time.Now()
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:          "fake-drive-file-1",
+		DriveID:     "drive",
+		FileID:      "file-1",
+		FileName:    "clip.mp4",
+		Title:       "clip",
+		Size:        123,
+		PublishedAt: now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	drv := &scannerFakeDrive{
+		entries: []drives.Entry{{
+			ID:    "file-1",
+			Name:  "clip.mp4",
+			Title: "Remote Video Title",
+			Size:  123,
+		}},
+	}
+	sc := New(cat, drv, []string{".mp4"}, nil, nil)
+
+	if _, err := sc.Run(ctx, ""); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got, err := cat.GetVideo(ctx, "fake-drive-file-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if got.Title != "Remote Video Title" {
+		t.Fatalf("title = %q, want updated drive title", got.Title)
+	}
+}
+
 func TestRunIgnoresZeroSizeVideoFiles(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
@@ -912,6 +1030,19 @@ func (d *scannerTagFakeDrive) EntryTags(_ context.Context, entry drives.Entry) (
 		return nil, d.err
 	}
 	return d.tagsByID[entry.ID], nil
+}
+
+type scannerTitleFakeDrive struct {
+	scannerFakeDrive
+	titlesByID map[string]string
+	err        error
+}
+
+func (d *scannerTitleFakeDrive) EntryTitle(_ context.Context, entry drives.Entry) (string, error) {
+	if d.err != nil {
+		return "", d.err
+	}
+	return d.titlesByID[entry.ID], nil
 }
 
 type scannerTreeFakeDrive struct {

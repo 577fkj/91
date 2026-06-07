@@ -66,6 +66,10 @@ type EntryTagProvider interface {
 	EntryTags(ctx context.Context, entry Entry) ([]string, error)
 }
 
+type EntryTitleProvider interface {
+	EntryTitle(ctx context.Context, entry Entry) (string, error)
+}
+
 type StreamURLWithHeaderProvider interface {
 	StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*StreamLink, error)
 }
@@ -73,6 +77,7 @@ type StreamURLWithHeaderProvider interface {
 type Entry struct {
 	ID           string
 	Name         string
+	Title        string
 	Size         int64
 	Hash         string
 	IsDir        bool
@@ -91,6 +96,7 @@ type StreamLink struct {
 
 type Capabilities struct {
 	EntryTags           bool
+	EntryTitle          bool
 	StreamURLWithHeader bool
 }
 
@@ -186,6 +192,14 @@ type EntryTagsArgs struct {
 
 type EntryTagsReply struct {
 	Tags []string
+}
+
+type EntryTitleArgs struct {
+	Entry Entry
+}
+
+type EntryTitleReply struct {
+	Title string
 }
 
 type RPCServer struct {
@@ -287,9 +301,11 @@ func (s *RPCServer) RootID(_ Empty, reply *StringReply) error {
 
 func (s *RPCServer) Capabilities(_ Empty, reply *CapabilitiesReply) error {
 	_, entryTags := s.Impl.(EntryTagProvider)
+	_, entryTitle := s.Impl.(EntryTitleProvider)
 	_, streamURLWithHeader := s.Impl.(StreamURLWithHeaderProvider)
 	reply.Capabilities = Capabilities{
 		EntryTags:           entryTags,
+		EntryTitle:          entryTitle,
 		StreamURLWithHeader: streamURLWithHeader,
 	}
 	return nil
@@ -305,6 +321,19 @@ func (s *RPCServer) EntryTags(args EntryTagsArgs, reply *EntryTagsReply) error {
 		return err
 	}
 	reply.Tags = tags
+	return nil
+}
+
+func (s *RPCServer) EntryTitle(args EntryTitleArgs, reply *EntryTitleReply) error {
+	provider, ok := s.Impl.(EntryTitleProvider)
+	if !ok {
+		return ErrNotSupported
+	}
+	title, err := provider.EntryTitle(context.Background(), args.Entry)
+	if err != nil {
+		return err
+	}
+	reply.Title = title
 	return nil
 }
 
@@ -447,6 +476,14 @@ func (c *RPCClient) EntryTags(ctx context.Context, entry Entry) ([]string, error
 		return nil, err
 	}
 	return reply.Tags, nil
+}
+
+func (c *RPCClient) EntryTitle(ctx context.Context, entry Entry) (string, error) {
+	var reply EntryTitleReply
+	if err := c.call(ctx, "EntryTitle", EntryTitleArgs{Entry: entry}, &reply); err != nil {
+		return "", err
+	}
+	return reply.Title, nil
 }
 
 func (c *RPCClient) StreamURLWithHeader(ctx context.Context, fileID string, header http.Header) (*StreamLink, error) {

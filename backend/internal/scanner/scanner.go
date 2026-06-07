@@ -172,8 +172,20 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 		}
 
 		parsed := Parse(e.Name)
-		if parsed.Title == "" {
-			parsed.Title = strings.TrimSuffix(e.Name, ext)
+		fallbackTitle := parsed.Title
+		if fallbackTitle == "" {
+			fallbackTitle = strings.TrimSuffix(e.Name, ext)
+		}
+		driveTitle := ""
+		if provided, err := s.entryTitle(ctx, e); err != nil {
+			log.Printf("[scanner] read drive title for %s error: %v", e.Name, err)
+		} else {
+			driveTitle = strings.TrimSpace(provided)
+		}
+		if driveTitle != "" {
+			parsed.Title = driveTitle
+		} else {
+			parsed.Title = fallbackTitle
 		}
 		tags := parsed.Tags
 		if provided, err := s.entryTags(ctx, e); err != nil {
@@ -211,11 +223,15 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 				patch.FileName = e.Name
 				existing.FileName = e.Name
 			}
+			if shouldUpdateScannedTitle(existing.Title, fallbackTitle, parsed.Title, driveTitle != "") {
+				patch.Title = parsed.Title
+				existing.Title = parsed.Title
+			}
 			// 已存在但轻量元数据空缺时，顺便补齐。
 			if existing.Category == "" && dirName != "" {
 				patch.Category = dirName
 			}
-			if patch.Category != "" || patch.ContentHash != "" || patch.FileName != "" {
+			if patch.Category != "" || patch.ContentHash != "" || patch.FileName != "" || patch.Title != "" {
 				_ = s.Catalog.UpdateVideoMeta(ctx, id, patch)
 				if err := ctx.Err(); err != nil {
 					return err
@@ -298,6 +314,29 @@ func (s *Scanner) entryTags(ctx context.Context, e drives.Entry) ([]string, erro
 		return nil, nil
 	}
 	return provider.EntryTags(ctx, e)
+}
+
+func (s *Scanner) entryTitle(ctx context.Context, e drives.Entry) (string, error) {
+	if provider, ok := s.Drive.(drives.EntryTitleProvider); ok {
+		title, err := provider.EntryTitle(ctx, e)
+		if err != nil {
+			return "", err
+		}
+		if title = strings.TrimSpace(title); title != "" {
+			return title, nil
+		}
+	}
+	return strings.TrimSpace(e.Title), nil
+}
+
+func shouldUpdateScannedTitle(existingTitle, fallbackTitle, scannedTitle string, hasDriveTitle bool) bool {
+	existingTitle = strings.TrimSpace(existingTitle)
+	fallbackTitle = strings.TrimSpace(fallbackTitle)
+	scannedTitle = strings.TrimSpace(scannedTitle)
+	if scannedTitle == "" || existingTitle == scannedTitle {
+		return false
+	}
+	return existingTitle == "" || (hasDriveTitle && existingTitle == fallbackTitle)
 }
 
 func (s *Scanner) findDuplicateByHash(ctx context.Context, hash, currentID string) *catalog.Video {
