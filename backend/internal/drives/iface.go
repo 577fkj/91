@@ -55,6 +55,12 @@ type Entry struct {
 	ThumbnailURL string // 网盘侧已提供的快速缩略图
 }
 
+// EntryTagProvider 是 Drive 的可选能力。实现后，扫描器会在发现视频文件时
+// 读取该文件的外部标签，并合并保存为视频自动标签。
+type EntryTagProvider interface {
+	EntryTags(ctx context.Context, entry Entry) ([]string, error)
+}
+
 type StreamLink struct {
 	URL     string
 	Headers http.Header

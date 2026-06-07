@@ -711,6 +711,14 @@ ORDER BY cnt DESC, t.label ASC`)
 }
 
 func videoMatchesTagLabelSQL(videoAlias string) string {
+	return videoMatchesTagFilterSQL(videoAlias, `tag_filter.label = ? COLLATE NOCASE`)
+}
+
+func videoMatchesTagSearchSQL(videoAlias string) string {
+	return videoMatchesTagFilterSQL(videoAlias, `(tag_filter.label COLLATE NOCASE LIKE ? OR tag_filter.aliases COLLATE NOCASE LIKE ?)`)
+}
+
+func videoMatchesTagFilterSQL(videoAlias, tagFilterSQL string) string {
 	return fmt.Sprintf(`%s.id IN (
 			WITH tagged_videos AS (
 				SELECT tagged.id,
@@ -721,7 +729,7 @@ func videoMatchesTagLabelSQL(videoAlias string) string {
 				  FROM video_tags vt
 				  JOIN tags tag_filter ON tag_filter.id = vt.tag_id
 				  JOIN videos tagged ON tagged.id = vt.video_id
-				 WHERE tag_filter.label = ? COLLATE NOCASE
+				 WHERE %s
 				   AND COALESCE(tagged.hidden, 0) = 0
 			),
 			tag_candidates AS (
@@ -767,7 +775,7 @@ func videoMatchesTagLabelSQL(videoAlias string) string {
 			SELECT video_id
 			  FROM tag_candidates
 			 WHERE video_id IS NOT NULL
-		)`, videoAlias)
+		)`, videoAlias, tagFilterSQL)
 }
 
 func (c *Catalog) SetManualVideoTags(ctx context.Context, videoID string, labels []string) error {
@@ -781,7 +789,7 @@ func (c *Catalog) SetAutoVideoTags(ctx context.Context, videoID string, labels [
 	if c.hasManualTags(ctx, videoID) {
 		return nil
 	}
-	return c.replaceVideoTags(ctx, videoID, labels, "auto", false, false)
+	return c.replaceVideoTags(ctx, videoID, labels, "auto", false, true)
 }
 
 func (c *Catalog) MatchTags(ctx context.Context, text string) ([]string, error) {

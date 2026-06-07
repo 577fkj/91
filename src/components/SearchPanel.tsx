@@ -25,7 +25,7 @@ export function SearchPanel() {
             type="text"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="搜索视频标题或作者..."
+            placeholder="搜索视频标题、作者或标签..."
             aria-label="搜索关键词"
           />
         </div>

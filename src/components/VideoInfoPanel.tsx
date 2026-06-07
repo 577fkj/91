@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Pencil, Tag, X } from "lucide-react";
 import type { TagItem, VideoDetail } from "@/types";
 
@@ -119,9 +120,14 @@ export function VideoInfoPanel({
             <span className="vd-info__tags-empty">暂无标签</span>
           ) : (
             tags.map((t) => (
-              <span key={t} className="vd-tag">
+              <Link
+                key={t}
+                to={`/list?tag=${encodeURIComponent(t)}`}
+                className="vd-tag"
+                title={`查看 ${t} 标签视频`}
+              >
                 #{t}
-              </span>
+              </Link>
             ))
           )}
         </div>

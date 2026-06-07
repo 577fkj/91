@@ -176,6 +176,14 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 			parsed.Title = strings.TrimSuffix(e.Name, ext)
 		}
 		tags := parsed.Tags
+		if provided, err := s.entryTags(ctx, e); err != nil {
+			log.Printf("[scanner] read drive tags for %s error: %v", e.Name, err)
+		} else {
+			tags = mergeTags(tags, provided)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if matched, err := s.Catalog.MatchTags(ctx, e.Name+" "+dirName+" "+parsed.Author); err == nil {
 			tags = mergeTags(tags, matched)
 		}
@@ -284,6 +292,14 @@ func (s *Scanner) findDuplicate(ctx context.Context, hash, fileName string, size
 	return s.findDuplicateByFileSignature(ctx, fileName, size, currentID)
 }
 
+func (s *Scanner) entryTags(ctx context.Context, e drives.Entry) ([]string, error) {
+	provider, ok := s.Drive.(drives.EntryTagProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.EntryTags(ctx, e)
+}
+
 func (s *Scanner) findDuplicateByHash(ctx context.Context, hash, currentID string) *catalog.Video {
 	if hash == "" {
 		return nil
@@ -323,10 +339,12 @@ func mergeTags(lists ...[]string) []string {
 	seen := map[string]bool{}
 	for _, list := range lists {
 		for _, tag := range list {
-			if tag == "" || seen[tag] {
+			tag = strings.TrimSpace(tag)
+			key := strings.ToLower(tag)
+			if tag == "" || seen[key] {
 				continue
 			}
-			seen[tag] = true
+			seen[key] = true
 			out = append(out, tag)
 		}
 	}

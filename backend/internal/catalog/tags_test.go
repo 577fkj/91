@@ -1233,6 +1233,57 @@ func TestListVideosCanFilterReadyThumbnails(t *testing.T) {
 	}
 }
 
+func TestListVideosKeywordMatchesTagLabels(t *testing.T) {
+	ctx := context.Background()
+	cat, err := Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, v := range []*Video{
+		{
+			ID:          "tagged-video",
+			DriveID:     "local-upload",
+			FileID:      "tagged-video.mp4",
+			Title:       "plain title",
+			Tags:        []string{"tag-only-match"},
+			PublishedAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "untagged-video",
+			DriveID:     "local-upload",
+			FileID:      "untagged-video.mp4",
+			Title:       "plain other",
+			PublishedAt: now.Add(time.Second),
+			CreatedAt:   now.Add(time.Second),
+			UpdatedAt:   now.Add(time.Second),
+		},
+	} {
+		if err := cat.UpsertVideo(ctx, v); err != nil {
+			t.Fatalf("seed %s: %v", v.ID, err)
+		}
+	}
+
+	items, total, err := cat.ListVideos(ctx, ListParams{Keyword: "tag-only-match", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list videos by tag keyword: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("tag keyword total=%d len=%d, want 1", total, len(items))
+	}
+	if items[0].ID != "tagged-video" {
+		t.Fatalf("tag keyword id = %q, want tagged-video", items[0].ID)
+	}
+}
+
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

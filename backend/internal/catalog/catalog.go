@@ -1009,10 +1009,10 @@ func (c *Catalog) ListVideos(ctx context.Context, p ListParams) ([]*Video, int, 
 
 	var where []string
 	var args []any
-	if p.Keyword != "" {
-		where = append(where, "(title LIKE ? OR author LIKE ?)")
-		like := "%" + p.Keyword + "%"
-		args = append(args, like, like)
+	if keyword := strings.TrimSpace(p.Keyword); keyword != "" {
+		where = append(where, "(title LIKE ? OR author LIKE ? OR "+videoMatchesTagSearchSQL("videos")+")")
+		like := "%" + keyword + "%"
+		args = append(args, like, like, like, like)
 	}
 	if p.DriveID != "" {
 		where = append(where, "drive_id = ?")

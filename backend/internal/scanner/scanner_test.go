@@ -296,6 +296,100 @@ func TestRunReplacesExistingVideoTagsWithFixedFilenameTags(t *testing.T) {
 	}
 }
 
+func TestRunSavesTagsFromDriveEntryTagProvider(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	drv := &scannerTagFakeDrive{
+		scannerFakeDrive: scannerFakeDrive{
+			entries: []drives.Entry{{
+				ID:   "file-1",
+				Name: "plain.mp4",
+				Size: 123,
+			}},
+		},
+		tagsByID: map[string][]string{
+			"file-1": []string{" drive-tag ", "Drive-Tag", "source-tag"},
+		},
+	}
+	sc := New(cat, drv, []string{".mp4"}, nil, nil)
+
+	if _, err := sc.Run(ctx, ""); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	got, err := cat.GetVideo(ctx, "fake-drive-file-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	want := []string{"drive-tag", "source-tag"}
+	if !sameStrings(got.Tags, want) {
+		t.Fatalf("tags = %#v, want %#v", got.Tags, want)
+	}
+}
+
+func TestRunUpdatesExistingVideoTagsFromDriveEntryTagProvider(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:            "fake-drive-file-1",
+		DriveID:       "drive",
+		FileID:        "file-1",
+		Title:         "Old",
+		PreviewStatus: "pending",
+		PublishedAt:   now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	drv := &scannerTagFakeDrive{
+		scannerFakeDrive: scannerFakeDrive{
+			entries: []drives.Entry{{
+				ID:      "file-1",
+				Name:    "plain.mp4",
+				Size:    123,
+				ModTime: now,
+			}},
+		},
+		tagsByID: map[string][]string{
+			"file-1": []string{"drive-existing"},
+		},
+	}
+	sc := New(cat, drv, []string{".mp4"}, nil, nil)
+
+	if _, err := sc.Run(ctx, ""); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	got, err := cat.GetVideo(ctx, "fake-drive-file-1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if !sameStrings(got.Tags, []string{"drive-existing"}) {
+		t.Fatalf("tags = %#v, want drive-existing", got.Tags)
+	}
+}
+
 func TestRunAddsShortCollectionDirectoryAsTag(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
@@ -806,6 +900,19 @@ func (d *scannerFakeDrive) EnsureDir(context.Context, string) (string, error) {
 	return "", drives.ErrNotSupported
 }
 func (d *scannerFakeDrive) RootID() string { return "root" }
+
+type scannerTagFakeDrive struct {
+	scannerFakeDrive
+	tagsByID map[string][]string
+	err      error
+}
+
+func (d *scannerTagFakeDrive) EntryTags(_ context.Context, entry drives.Entry) ([]string, error) {
+	if d.err != nil {
+		return nil, d.err
+	}
+	return d.tagsByID[entry.ID], nil
+}
 
 type scannerTreeFakeDrive struct {
 	kind    string
