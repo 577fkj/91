@@ -103,6 +103,11 @@ func main() {
 	// 登录态校验拖慢端口监听。
 	app.loadTheme(ctx)
 	app.loadSpider91UploadDriveID(ctx)
+	if imported, err := app.importConfiguredDrives(ctx); err != nil {
+		log.Printf("[drive] import configured drives: %v", err)
+	} else if imported > 0 {
+		log.Printf("[drive] imported %d drive(s) from config", imported)
+	}
 	if removed, err := app.cleanupOrphanDriveVideos(ctx); err != nil {
 		log.Printf("[cleanup] orphan drive videos: %v", err)
 	} else if removed > 0 {
@@ -573,6 +578,58 @@ func (a *App) attachDrive(ctx context.Context, d *catalog.Drive) error {
 	a.driveAttachMu.Lock()
 	defer a.driveAttachMu.Unlock()
 	return a.attachDriveUnlocked(ctx, d)
+}
+
+func (a *App) importConfiguredDrives(ctx context.Context) (int, error) {
+	if a == nil || a.cfg == nil || a.cat == nil || len(a.cfg.Drives) == 0 {
+		return 0, nil
+	}
+	imported := 0
+	for _, cfgDrive := range a.cfg.Drives {
+		if err := ctx.Err(); err != nil {
+			return imported, err
+		}
+		id := strings.TrimSpace(cfgDrive.ID)
+		kind := strings.TrimSpace(cfgDrive.Kind)
+		if id == "" || kind == "" {
+			return imported, fmt.Errorf("configured drive id and kind are required")
+		}
+		name := strings.TrimSpace(cfgDrive.Name)
+		if name == "" {
+			name = id
+		}
+		credentials := make(map[string]string, len(cfgDrive.Params))
+		for k, v := range cfgDrive.Params {
+			key := strings.TrimSpace(k)
+			if key == "" {
+				continue
+			}
+			credentials[key] = v
+		}
+		teaserEnabled := true
+		var skipDirIDs []string
+		if existing, err := a.cat.GetDrive(ctx, id); err == nil && existing != nil {
+			teaserEnabled = existing.TeaserEnabled
+			skipDirIDs = existing.SkipDirIDs
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return imported, fmt.Errorf("get configured drive %s: %w", id, err)
+		}
+		d := &catalog.Drive{
+			ID:            id,
+			Kind:          kind,
+			Name:          name,
+			RootID:        cfgDrive.RootID,
+			Credentials:   credentials,
+			Status:        "disconnected",
+			TeaserEnabled: teaserEnabled,
+			SkipDirIDs:    skipDirIDs,
+		}
+		if err := a.cat.UpsertDrive(ctx, d); err != nil {
+			return imported, fmt.Errorf("upsert configured drive %s: %w", id, err)
+		}
+		imported++
+	}
+	return imported, nil
 }
 
 func (a *App) ensureDriveAttached(ctx context.Context, driveID string) error {

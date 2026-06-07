@@ -509,6 +509,108 @@ func TestNightlyTargetsComeFromCatalogBeforeDriveAttach(t *testing.T) {
 	}
 }
 
+func TestImportConfiguredDrivesAddsPluginDrive(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	app := &App{
+		cat: cat,
+		cfg: &config.Config{Drives: []config.Drive{{
+			ID:     "uboy91",
+			Kind:   "plugin",
+			Name:   "UBoy 91",
+			RootID: "root",
+			Params: map[string]string{
+				"command":     "/opt/video-site-91/data/plugins/uboy91-json-drive-linux-amd64",
+				"args":        `["--config","/opt/video-site-91/data/plugins/config.json"]`,
+				"plugin_kind": "uboy91json",
+			},
+		}}},
+	}
+
+	imported, err := app.importConfiguredDrives(ctx)
+	if err != nil {
+		t.Fatalf("import configured drives: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported = %d, want 1", imported)
+	}
+	got, err := cat.GetDrive(ctx, "uboy91")
+	if err != nil {
+		t.Fatalf("get drive: %v", err)
+	}
+	if got.Kind != "plugin" || got.Name != "UBoy 91" || got.RootID != "root" {
+		t.Fatalf("drive = %#v, want configured plugin drive", got)
+	}
+	if got.Credentials["command"] != "/opt/video-site-91/data/plugins/uboy91-json-drive-linux-amd64" ||
+		got.Credentials["args"] != `["--config","/opt/video-site-91/data/plugins/config.json"]` ||
+		got.Credentials["plugin_kind"] != "uboy91json" {
+		t.Fatalf("credentials = %#v, want configured plugin credentials", got.Credentials)
+	}
+	if !got.TeaserEnabled {
+		t.Fatal("teaser enabled = false, want true for new configured drive")
+	}
+}
+
+func TestImportConfiguredDrivesPreservesDriveUserSettings(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	if err := cat.UpsertDrive(ctx, &catalog.Drive{
+		ID:            "demo",
+		Kind:          "plugin",
+		Name:          "Old",
+		RootID:        "root",
+		Credentials:   map[string]string{"command": "/old"},
+		TeaserEnabled: false,
+		SkipDirIDs:    []string{"skip-dir"},
+	}); err != nil {
+		t.Fatalf("seed drive: %v", err)
+	}
+	app := &App{
+		cat: cat,
+		cfg: &config.Config{Drives: []config.Drive{{
+			ID:     "demo",
+			Kind:   "plugin",
+			Name:   "New",
+			RootID: "root",
+			Params: map[string]string{"command": "/new"},
+		}}},
+	}
+
+	if _, err := app.importConfiguredDrives(ctx); err != nil {
+		t.Fatalf("import configured drives: %v", err)
+	}
+	got, err := cat.GetDrive(ctx, "demo")
+	if err != nil {
+		t.Fatalf("get drive: %v", err)
+	}
+	if got.Name != "New" || got.Credentials["command"] != "/new" {
+		t.Fatalf("drive = %#v, want updated config fields", got)
+	}
+	if got.TeaserEnabled {
+		t.Fatal("teaser enabled = true, want existing disabled setting preserved")
+	}
+	if len(got.SkipDirIDs) != 1 || got.SkipDirIDs[0] != "skip-dir" {
+		t.Fatalf("skip dirs = %#v, want existing skip dirs preserved", got.SkipDirIDs)
+	}
+}
+
 func TestFailedThumbnailsDoNotBlockPreviewGeneration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
