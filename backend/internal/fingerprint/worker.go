@@ -149,6 +149,28 @@ func (w *Worker) Status() TaskStatus {
 	return status
 }
 
+// WaitIdle blocks until the fingerprint queue is empty and no item is being processed.
+func (w *Worker) WaitIdle(ctx context.Context) error {
+	if w == nil {
+		return nil
+	}
+	if w.queue.lengthExcluding("") == 0 {
+		return nil
+	}
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if w.queue.lengthExcluding("") == 0 {
+				return nil
+			}
+		}
+	}
+}
+
 func (w *Worker) processQueued(ctx context.Context, v *catalog.Video) {
 	defer w.queue.release(v.ID)
 	if w.Catalog == nil || w.Drive == nil || v == nil || v.ID == "" {
@@ -327,9 +349,72 @@ func readHTTPRange(ctx context.Context, hc *http.Client, link *drives.StreamLink
 				return data, nil
 			}
 		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		if remoteRangeResponseLooksRateLimited(link.URL, resp.StatusCode, body) {
+			return nil, &drives.RateLimitError{
+				Provider:   "fingerprint",
+				RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+				Err:        fmt.Errorf("remote sample rate limited: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body))),
+			}
+		}
 		return nil, fmt.Errorf("fingerprint: range request got status=%d for bytes=%d-%d", resp.StatusCode, r.start, end)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, r.length))
+}
+
+func remoteRangeResponseLooksRateLimited(rawURL string, status int, body []byte) bool {
+	if status == http.StatusTooManyRequests {
+		return true
+	}
+	if isWopanMediaURL(rawURL) && (status == http.StatusForbidden || status == http.StatusTooManyRequests ||
+		status == http.StatusInternalServerError || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout ||
+		status == 509) {
+		return true
+	}
+	if isGuangYaPanMediaURL(rawURL) && (status == http.StatusForbidden || status == http.StatusTooManyRequests ||
+		status == http.StatusInternalServerError || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout ||
+		status == 509) {
+		return true
+	}
+	if status == http.StatusForbidden && isGoogleDriveMediaURL(rawURL) {
+		return true
+	}
+	return false
+}
+
+func isWopanMediaURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.ToLower(u.Path)
+	return (strings.HasSuffix(host, "pan.wo.cn") ||
+		strings.HasSuffix(host, "smartont.net") ||
+		strings.Contains(host, "wo.cn")) &&
+		strings.Contains(path, "/openapi/download")
+}
+
+func isGuangYaPanMediaURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return strings.HasSuffix(host, "guangyacdn.com") ||
+		strings.HasSuffix(host, "guangyapan.com")
+}
+
+func isGoogleDriveMediaURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	path := strings.ToLower(u.Path)
+	return strings.Contains(host, "googleapis.com") && strings.Contains(path, "/drive/")
 }
 
 func parseRetryAfter(raw string) time.Duration {

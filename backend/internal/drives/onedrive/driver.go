@@ -501,6 +501,17 @@ func (d *Driver) Rename(ctx context.Context, fileID, newName string) error {
 	return nil
 }
 
+func (d *Driver) Remove(ctx context.Context, fileID string) error {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return errors.New("onedrive remove: empty file id")
+	}
+	if err := d.request(ctx, d.itemURL(fileID), http.MethodDelete, nil, nil); err != nil {
+		return fmt.Errorf("onedrive remove: %w", err)
+	}
+	return nil
+}
+
 func (d *Driver) request(ctx context.Context, rawURL, method string, configure func(*resty.Request), out any) error {
 	return d.requestOnce(ctx, rawURL, method, configure, out, true)
 }
@@ -583,8 +594,8 @@ func (d *Driver) refresh(ctx context.Context) error {
 	return nil
 }
 
-func isRateLimitResponse(res *resty.Response, code, message string) bool {
-	if isRateLimitCode(code) || isRateLimitMessage(message) {
+func isRateLimitResponse(res *resty.Response, code, _ string) bool {
+	if isRateLimitCode(code) {
 		return true
 	}
 	if res == nil {
@@ -619,18 +630,6 @@ func isRateLimitCode(code string) bool {
 	default:
 		return false
 	}
-}
-
-func isRateLimitMessage(message string) bool {
-	text := strings.ToLower(strings.TrimSpace(message))
-	if text == "" {
-		return false
-	}
-	return strings.Contains(text, "too many requests") ||
-		strings.Contains(text, "throttl") ||
-		strings.Contains(text, "rate limit") ||
-		strings.Contains(text, "activity limit") ||
-		strings.Contains(text, "temporarily blocked")
 }
 
 func onedriveRateLimitError(res *resty.Response, message string) error {
@@ -741,3 +740,4 @@ func guessMime(name string) string {
 }
 
 var _ drives.Drive = (*Driver)(nil)
+var _ drives.Remover = (*Driver)(nil)

@@ -952,15 +952,7 @@ func redactURLs(text string) string {
 }
 
 func ffmpegOutputLooksRateLimited(output []byte) bool {
-	text := strings.ToLower(string(output))
-	if !strings.Contains(text, "429") {
-		return false
-	}
-	return strings.Contains(text, "too many requests") ||
-		strings.Contains(text, "throttl") ||
-		strings.Contains(text, "rate limit") ||
-		strings.Contains(text, "rate-limit") ||
-		strings.Contains(text, "server returned 429")
+	return drives.TextMentionsHTTPStatus(string(output), http.StatusTooManyRequests)
 }
 
 // --- 本地落盘 ---
@@ -1064,12 +1056,10 @@ type ThumbWorker struct {
 }
 
 const (
-	defaultTransientMediaCooldown               = 5 * time.Minute
-	defaultGenerationRateLimitCooldown          = 5 * time.Minute
-	defaultThumbTransientMediaMaxFailures       = 3
-	defaultWorkerQueueSize                      = 10000
-	maxPreviewTeaserSizeBytes             int64 = 5 * 1024 * 1024 * 1024
-	previewStatusSkipped                        = "skipped"
+	defaultTransientMediaCooldown         = 5 * time.Minute
+	defaultGenerationRateLimitCooldown    = 5 * time.Minute
+	defaultThumbTransientMediaMaxFailures = 3
+	defaultWorkerQueueSize                = 10000
 )
 
 type rateLimitState struct {
@@ -1427,11 +1417,17 @@ func (w *Worker) skipIfRateLimited(v *catalog.Video) bool {
 }
 
 func (w *Worker) pauseForRateLimit(err error, step, title string) bool {
-	_, ok := drives.RateLimitRetryAfter(err)
+	wait, ok := drives.RateLimitRetryAfter(err)
 	if !ok {
 		return false
 	}
-	until := w.rateLimit.pause(time.Now(), defaultGenerationRateLimitCooldown)
+	if wait <= 0 {
+		wait = w.RateLimitCooldown
+		if wait <= 0 {
+			wait = defaultGenerationRateLimitCooldown
+		}
+	}
+	until := w.rateLimit.pause(time.Now(), wait)
 	log.Printf("[preview] drive=%s rate-limited until=%s step=%s video=%s: %v", w.Drive.ID(), until.Format(time.RFC3339), step, title, err)
 	return true
 }
@@ -1460,11 +1456,17 @@ func (w *ThumbWorker) skipIfRateLimited(v *catalog.Video) bool {
 }
 
 func (w *ThumbWorker) pauseForRateLimit(err error, step, title string) bool {
-	_, ok := drives.RateLimitRetryAfter(err)
+	wait, ok := drives.RateLimitRetryAfter(err)
 	if !ok {
 		return false
 	}
-	until := w.rateLimit.pause(time.Now(), defaultGenerationRateLimitCooldown)
+	if wait <= 0 {
+		wait = w.RateLimitCooldown
+		if wait <= 0 {
+			wait = defaultGenerationRateLimitCooldown
+		}
+	}
+	until := w.rateLimit.pause(time.Now(), wait)
 	log.Printf("[thumb] drive=%s rate-limited until=%s step=%s video=%s: %v", w.Drive.ID(), until.Format(time.RFC3339), step, title, err)
 	return true
 }
@@ -1506,60 +1508,17 @@ func driveErrorShouldCooldown(d drives.Drive, err error) bool {
 	}
 	switch d.Kind() {
 	case "p115":
-		text := strings.ToLower(err.Error())
-		return strings.Contains(text, "server returned 403") ||
-			strings.Contains(text, "403 forbidden") ||
-			strings.Contains(text, "server returned 405") ||
-			strings.Contains(text, "405 method") ||
-			strings.Contains(text, "access denied") ||
-			strings.Contains(text, "moov atom not found") ||
-			strings.Contains(text, "partial file") ||
-			strings.Contains(text, "request has been blocked") ||
-			strings.Contains(text, "访问被阻断")
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusForbidden, http.StatusMethodNotAllowed, http.StatusTooManyRequests)
 	case "pikpak":
-		// PikPak 在预览视频 / 封面生成阶段（取链或拉直链字节）可能命中：
-		//   - error_code=10  操作频繁
-		//   - HTTP 429 / 5xx / 509 限流和服务端不可用
-		//   - 通用文本：rate limit / too many requests / blocked
-		// 命中时让 worker 冷却 5 分钟，避免连续请求加重风控。
-		text := strings.ToLower(err.Error())
-		return strings.Contains(text, "error_code=10") ||
-			strings.Contains(text, "操作频繁") ||
-			strings.Contains(text, "429") ||
-			strings.Contains(text, "http 500") ||
-			strings.Contains(text, "http 502") ||
-			strings.Contains(text, "http 503") ||
-			strings.Contains(text, "http 504") ||
-			strings.Contains(text, "http 509") ||
-			strings.Contains(text, "too many request") ||
-			strings.Contains(text, "too many requests") ||
-			strings.Contains(text, "rate limit") ||
-			strings.Contains(text, "blocked") ||
-			strings.Contains(text, "partial file") ||
-			strings.Contains(text, "service unavailable")
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 509)
 	case "p123":
-		// 123 云盘直链解析 / ffmpeg 读取阶段可能返回 429、5xx，或 WAF 类
-		// blocked / 访问阻断文本。命中时冷却，避免封面和预览视频生成连续打接口。
-		text := strings.ToLower(err.Error())
-		return strings.Contains(text, "请求太频繁") ||
-			strings.Contains(text, "请求过于频繁") ||
-			strings.Contains(text, "请求频繁") ||
-			strings.Contains(text, "操作频繁") ||
-			strings.Contains(text, "频率限制") ||
-			strings.Contains(text, "请求次数过多") ||
-			strings.Contains(text, "429") ||
-			strings.Contains(text, "http 500") ||
-			strings.Contains(text, "http 502") ||
-			strings.Contains(text, "http 503") ||
-			strings.Contains(text, "http 504") ||
-			strings.Contains(text, "server returned 403") ||
-			strings.Contains(text, "403 forbidden") ||
-			strings.Contains(text, "too many request") ||
-			strings.Contains(text, "too many requests") ||
-			strings.Contains(text, "rate limit") ||
-			strings.Contains(text, "blocked") ||
-			strings.Contains(text, "访问被阻断") ||
-			strings.Contains(text, "service unavailable")
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout)
+	case "wopan":
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 509)
+	case "guangyapan":
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, 509)
+	case "googledrive":
+		return drives.ErrorMentionsHTTPStatus(err, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout)
 	}
 	return false
 }
@@ -1713,15 +1672,6 @@ func localPreviewLink(v *catalog.Video) (*drives.StreamLink, bool) {
 }
 
 func (w *Worker) process(ctx context.Context, v *catalog.Video) {
-	if shouldSkipTeaser(v) {
-		removePreviousLocalTeaser(v.PreviewLocal, "")
-		if err := w.Catalog.UpdatePreview(ctx, v.ID, "", previewStatusSkipped); err != nil {
-			log.Printf("[preview] skip %s: update status: %v", v.Title, err)
-			return
-		}
-		log.Printf("[preview] skip %s: size=%d exceeds 5GiB teaser limit", v.Title, v.Size)
-		return
-	}
 	if w.skipIfRateLimited(v) {
 		return
 	}
@@ -1772,10 +1722,6 @@ func (w *Worker) process(ctx context.Context, v *catalog.Video) {
 		return
 	}
 	log.Printf("[preview] ready %s (duration=%.1fs)", v.Title, duration)
-}
-
-func shouldSkipTeaser(v *catalog.Video) bool {
-	return v != nil && v.Size > maxPreviewTeaserSizeBytes
 }
 
 func (w *Worker) generateTeaser(ctx context.Context, v *catalog.Video, link *drives.StreamLink, duration float64) (string, error) {

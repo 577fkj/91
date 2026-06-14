@@ -94,6 +94,13 @@
   --video-player-progress-hover: rgba(255, 197, 216, 0.42);
 }
 
+:root[data-theme="sky"] .video-player {
+  --video-player-progress: #58b8ff;
+  --video-player-progress-loaded: rgba(88, 184, 255, 0.36);
+  --video-player-progress-track: rgba(210, 236, 255, 0.32);
+  --video-player-progress-hover: rgba(166, 220, 255, 0.45);
+}
+
 .video-player__mount {
   position: absolute;
   inset: 0;
@@ -485,6 +492,27 @@
 }
 
 @media (max-width: 640px) {
+  .video-player .art-video-player {
+    --art-settings-icon-size: 18px;
+    --art-settings-max-height: 132px;
+    --art-selector-max-height: 132px;
+    --art-scrollbar-size: 3px;
+  }
+
+  .video-player .art-settings {
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .video-player .art-settings .art-setting-panel .art-setting-item {
+    padding: 0 7px;
+  }
+
+  .video-player .art-settings .art-setting-item-left,
+  .video-player .art-settings .art-setting-item-right {
+    gap: 5px;
+  }
+
   .video-player__error {
     width: calc(100% - 24px);
     padding: 16px;
@@ -648,6 +676,12 @@
   color: var(--drive-wopan);
 }
 
+.vd-meta__chip[data-tone="guangyapan"] {
+  background: rgba(48, 195, 168, 0.14);
+  border-color: rgba(48, 195, 168, 0.3);
+  color: var(--drive-guangyapan);
+}
+
 .vd-meta__chip[data-tone="onedrive"] {
   background: rgba(76, 171, 234, 0.14);
   border-color: rgba(76, 171, 234, 0.3);
@@ -757,7 +791,7 @@
   }
 }
 
-/* "不再显示"按钮：克制、hover 才露出 danger */
+/* 次要操作按钮：克制、hover 才露出 danger */
 .vd-actions__btn {
   display: inline-flex;
   align-items: center;
@@ -790,8 +824,184 @@
   cursor: not-allowed;
 }
 
-.vd-actions__hide {
+.vd-actions__delete {
   margin-left: auto;
+}
+
+/* ---------- Delete confirm modal ---------- */
+.vd-delete-modal {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
+  animation: vd-delete-fade var(--duration-fast) var(--ease-out);
+}
+
+@keyframes vd-delete-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.vd-delete-dialog {
+  width: min(460px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-default);
+  box-shadow: var(--shadow-xl);
+  animation: vd-delete-pop var(--duration-normal) var(--ease-out);
+}
+
+@keyframes vd-delete-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vd-delete-head {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.vd-delete-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--font-xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--line-tight);
+  letter-spacing: 0;
+}
+
+.vd-delete-text {
+  margin: 0;
+  color: var(--text-default);
+  font-size: var(--font-md);
+  line-height: var(--line-relaxed);
+  overflow-wrap: anywhere;
+}
+
+.vd-delete-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  cursor: pointer;
+}
+
+.vd-delete-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--danger);
+}
+
+.vd-delete-option span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.vd-delete-option strong {
+  color: var(--text-strong);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.vd-delete-option small {
+  color: var(--text-muted);
+  font-size: var(--font-xs);
+  line-height: var(--line-relaxed);
+}
+
+.vd-delete-option:has(input:disabled) {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.vd-delete-error {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid rgba(241, 85, 108, 0.3);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--font-sm);
+  line-height: var(--line-relaxed);
+}
+
+.vd-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.vd-delete-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-default);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.vd-delete-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.vd-delete-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vd-delete-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.vd-delete-confirm {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+.vd-delete-confirm:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+  filter: brightness(1.04);
 }
 
 /* ---------- Info card (description + tags) ---------- */
@@ -1256,6 +1466,13 @@
   letter-spacing: 0.04em;
 }
 
+:root[data-theme="sky"] .vd-rail__hd {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border: 0;
+  box-shadow: 0 4px 10px var(--accent-glow);
+}
+
 .vd-rail__body {
   min-width: 0;
   display: flex;
@@ -1705,10 +1922,16 @@
 
   .vd-skeleton__actions {
     display: grid;
-    grid-template-columns: 1fr 1fr 44px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
   }
 
   .vd-skeleton__actions span {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .vd-skeleton__actions span:last-child {
     width: 100%;
   }
 
@@ -1724,7 +1947,7 @@
     gap: var(--space-2) var(--space-3);
   }
 
-  /* 操作栏：点赞点踩组合占满主行，"不再显示"折到右侧或单独一行 */
+  /* 操作栏：点赞点踩组合占满主行，删除按钮固定在右侧 */
   .vd-actions {
     padding: var(--space-3) 0 0;
     gap: var(--space-2);
@@ -1743,7 +1966,7 @@
     padding: 0 var(--space-3);
   }
 
-  .vd-actions__hide {
+  .vd-actions__delete {
     margin-left: 0;
     width: 44px;
     padding: 0;
@@ -1751,8 +1974,27 @@
     flex: 0 0 auto;
   }
 
-  .vd-actions__hide span {
+  .vd-actions__delete span {
     display: none;
+  }
+
+  .vd-delete-modal {
+    place-items: center;
+    padding: var(--space-3);
+  }
+
+  .vd-delete-dialog {
+    width: 100%;
+    padding: var(--space-4);
+  }
+
+  .vd-delete-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .vd-delete-action {
+    width: 100%;
   }
 
   .vd-info__desc {

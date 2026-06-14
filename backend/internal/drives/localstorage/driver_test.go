@@ -195,6 +195,46 @@ func TestStreamURLRejectsSTRMTargetEscapingRootThroughSymlink(t *testing.T) {
 	}
 }
 
+func TestStreamURLAllowsSTRMTargetOutsideRootWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "movie.mp4")
+	writeLocalStorageTestFile(t, target, []byte("movie-data"))
+	writeLocalStorageTestFile(t, filepath.Join(root, "movie.strm"), []byte(target+"\n"))
+
+	// 默认关闭：根目录外的目标仍被拒绝
+	strict := New(Config{ID: "local", RootPath: root})
+	if _, err := strict.StreamURL(context.Background(), encodeRel("movie.strm")); err == nil || !strings.Contains(err.Error(), "strm target escapes root") {
+		t.Fatalf("default error = %v, want strm target escapes root", err)
+	}
+
+	// 开启 strm_allow_outside_root 后放行
+	relaxed := New(Config{ID: "local", RootPath: root, STRMAllowOutsideRoot: true})
+	link, err := relaxed.StreamURL(context.Background(), encodeRel("movie.strm"))
+	if err != nil {
+		t.Fatalf("StreamURL with allow-outside-root: %v", err)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatalf("eval target: %v", err)
+	}
+	if link.URL != resolved {
+		t.Fatalf("link url = %q, want %q", link.URL, resolved)
+	}
+}
+
+func TestStreamURLAllowOutsideRootStillRejectsNestedSTRM(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeLocalStorageTestFile(t, filepath.Join(outside, "inner.strm"), []byte("http://example.com/v.mp4\n"))
+	writeLocalStorageTestFile(t, filepath.Join(root, "movie.strm"), []byte(filepath.Join(outside, "inner.strm")+"\n"))
+
+	drv := New(Config{ID: "local", RootPath: root, STRMAllowOutsideRoot: true})
+	if _, err := drv.StreamURL(context.Background(), encodeRel("movie.strm")); err == nil || !strings.Contains(err.Error(), "nested strm") {
+		t.Fatalf("error = %v, want nested strm rejection", err)
+	}
+}
+
 func TestStreamURLRejectsSymlinkFileIDEscapingRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -237,7 +277,11 @@ func TestInitRequiresExistingDirectory(t *testing.T) {
 }
 
 func TestPathForIDAllowsRootPathSlash(t *testing.T) {
-	drv := New(Config{ID: "local", RootPath: string(os.PathSeparator)})
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "tmp"), 0o755); err != nil {
+		t.Fatalf("mkdir tmp: %v", err)
+	}
+	drv := New(Config{ID: "local", RootPath: root})
 	childID := encodeRel("tmp")
 
 	path, rel, err := drv.pathForID(childID)
@@ -248,8 +292,9 @@ func TestPathForIDAllowsRootPathSlash(t *testing.T) {
 	if rel != "tmp" {
 		t.Fatalf("rel = %q, want tmp", rel)
 	}
-	if path != filepath.Join(string(os.PathSeparator), "tmp") {
-		t.Fatalf("path = %q, want /tmp", path)
+	want := filepath.Join(root, "tmp")
+	if path != want {
+		t.Fatalf("path = %q, want %q", path, want)
 	}
 }
 

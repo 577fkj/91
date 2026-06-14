@@ -1,25 +1,29 @@
 import { useEffect, useState } from "react";
-import { EyeOff, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import type { VideoDetail } from "@/types";
 import { formatCount } from "@/lib/format";
 
 type Props = {
   video: VideoDetail;
-  onHideVideo: () => void;
-  hideSaving?: boolean;
+  onDeleteVideo: () => void;
+  deleteSaving?: boolean;
 };
 
 /**
  * 视频操作工具条。
  * - 整体是一张浮起的圆角玻璃卡，比上一版的横线分隔更"成体"。
  * - 点赞 + 点踩是两个独立按钮。
- * - "不再显示" 单独成一个次要按钮，hover 时露出 danger 色。
+ * - 删除是唯一的管理操作，hover 时露出 danger 色。
  *
  * 功能没变：
  * - 后端只有点赞计数接口，点踩仅本地 state。
  * - 失败回滚已经处理。
  */
-export function VideoActions({ video, onHideVideo, hideSaving }: Props) {
+export function VideoActions({
+  video,
+  onDeleteVideo,
+  deleteSaving,
+}: Props) {
   const [likes, setLikes] = useState(video.likes ?? 0);
   const [dislikes, setDislikes] = useState(video.dislikes ?? 0);
   const [bursting, setBursting] = useState(false);
@@ -113,13 +117,13 @@ export function VideoActions({ video, onHideVideo, hideSaving }: Props) {
 
       <button
         type="button"
-        className="vd-actions__btn vd-actions__hide"
-        onClick={onHideVideo}
-        disabled={hideSaving}
-        aria-label="不再显示这个视频"
+        className="vd-actions__btn vd-actions__delete"
+        onClick={onDeleteVideo}
+        disabled={deleteSaving}
+        aria-label="删除这个视频"
       >
-        <EyeOff size={16} />
-        <span>{hideSaving ? "处理中" : "不再显示"}</span>
+        <Trash2 size={16} />
+        <span>{deleteSaving ? "删除中" : "删除"}</span>
       </button>
     </div>
   );

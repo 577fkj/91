@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -101,6 +102,10 @@ func TestProbeIgnoresStderrWarnings(t *testing.T) {
 	dir := t.TempDir()
 	ffprobePath := filepath.Join(dir, "ffprobe")
 	script := "#!/bin/sh\nprintf '%s\\n' 'h264 warning' >&2\nprintf '%s\\n' '364.800000'\n"
+	if runtime.GOOS == "windows" {
+		ffprobePath += ".bat"
+		script = "@echo h264 warning 1>&2\r\n@echo 364.800000\r\n"
+	}
 	if err := os.WriteFile(ffprobePath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write ffprobe stub: %v", err)
 	}

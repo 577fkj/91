@@ -2,7 +2,9 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <link rel="apple-touch-icon" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="91 视频站" />
     <title>91</title>
@@ -18,7 +20,7 @@
       (function () {
         try {
           var t = localStorage.getItem("video-site:theme");
-          if (t === "pink" || t === "dark") {
+          if (t === "pink" || t === "dark" || t === "sky") {
             document.documentElement.setAttribute("data-theme", t);
           } else {
             document.documentElement.setAttribute("data-theme", "dark");

@@ -22,8 +22,9 @@ func TestIsTransient115ListError(t *testing.T) {
 		want bool
 	}{
 		{name: "nil", err: nil, want: false},
-		{name: "blocked html", err: errors.New(`<!doctype html><title>405</title>Sorry, your request has been blocked as it may cause potential threats to the server's security.`), want: true},
-		{name: "chinese waf", err: errors.New("很抱歉，由于您访问的URL有可能对网站造成安全威胁，您的访问被阻断。"), want: true},
+		{name: "blocked html without status context", err: errors.New(`<!doctype html><title>405</title>Sorry, your request has been blocked as it may cause potential threats to the server's security.`), want: false},
+		{name: "chinese waf", err: errors.New("很抱歉，由于您访问的URL有可能对网站造成安全威胁，您的访问被阻断。"), want: false},
+		{name: "status 405", err: errors.New("request failed with status: 405"), want: true},
 		{name: "rate limit", err: errors.New("429 too many requests"), want: true},
 		{name: "regular auth error", err: errors.New("invalid credential"), want: false},
 	}
@@ -43,10 +44,10 @@ func TestWrap115StreamTransientError(t *testing.T) {
 		err           error
 		wantRateLimit bool
 	}{
-		{name: "unexpected", err: errors.New("unexpected error"), wantRateLimit: true},
+		{name: "unexpected", err: errors.New("unexpected error"), wantRateLimit: false},
 		{name: "405 blocked", err: errors.New("405 request has been blocked"), wantRateLimit: true},
 		{name: "429", err: errors.New("429 too many requests"), wantRateLimit: true},
-		{name: "blocked", err: errors.New("blocked by waf"), wantRateLimit: true},
+		{name: "blocked", err: errors.New("blocked by waf"), wantRateLimit: false},
 		{name: "auth", err: errors.New("invalid credential"), wantRateLimit: false},
 	}
 

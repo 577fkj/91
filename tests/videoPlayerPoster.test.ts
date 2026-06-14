@@ -33,6 +33,55 @@ test("detail player does not keep playback resume state", () => {
   assert.doesNotMatch(detailCss, /video-player__resume/);
 });
 
+test("detail player does not persist ArtPlayer user settings", () => {
+  assert.doesNotMatch(playerSource, /localStorage/);
+  assert.doesNotMatch(playerSource, /SETTINGS_KEY/);
+  assert.doesNotMatch(playerSource, /readPlayerSettings/);
+  assert.doesNotMatch(playerSource, /writePlayerSettings/);
+  assert.doesNotMatch(playerSource, /video-site:player-settings/);
+  assert.match(playerSource, /volume:\s*DEFAULT_SETTINGS\.volume/);
+  assert.match(playerSource, /muted:\s*DEFAULT_SETTINGS\.muted/);
+  assert.match(playerSource, /video\.playbackRate = DEFAULT_SETTINGS\.playbackRate/);
+  assert.match(
+    playerSource,
+    /applyPlayerBrightness\(art,\s*DEFAULT_SETTINGS\.brightness\)/
+  );
+});
+
+test("detail player uses compact ArtPlayer settings panel on mobile", () => {
+  assert.match(playerSource, /const COMPACT_SETTING_LAYOUT = \{[\s\S]*width:\s*172[\s\S]*itemWidth:\s*148[\s\S]*itemHeight:\s*30/s);
+  assert.match(
+    playerSource,
+    /configureArtPlayerSettingLayout\(\s*shouldUseCompactPlayerSettings\(mount,\s*enableOrientationControl\)\s*\)/
+  );
+  assert.match(playerSource, /Artplayer\.SETTING_WIDTH = layout\.width/);
+  assert.match(playerSource, /Artplayer\.SETTING_ITEM_WIDTH = layout\.itemWidth/);
+  assert.match(playerSource, /Artplayer\.SETTING_ITEM_HEIGHT = layout\.itemHeight/);
+  assert.match(
+    detailCss,
+    /@media \(max-width:\s*640px\)\s*\{[\s\S]*\.video-player \.art-video-player\s*\{[^}]*--art-settings-icon-size:\s*18px[^}]*--art-settings-max-height:\s*132px[^}]*--art-selector-max-height:\s*132px/s
+  );
+});
+
+test("detail player exposes a non-persistent loop switch in ArtPlayer settings", () => {
+  assert.match(playerSource, /settings:\s*\[createLoopSetting\(\)\]/);
+  assert.match(playerSource, /function createLoopSetting\(\)/);
+  assert.match(playerSource, /html:\s*"洗脑循环"/);
+  assert.match(playerSource, /tooltip:\s*"关"/);
+  assert.match(playerSource, /switch:\s*false/);
+  assert.match(playerSource, /video\.loop = false/);
+  assert.match(playerSource, /this\.video\.loop = next/);
+  assert.match(playerSource, /item\.tooltip = next \? "开" : "关"/);
+});
+
+test("detail player limits ArtPlayer automatic reconnect attempts", () => {
+  assert.match(playerSource, /const ARTPLAYER_RECONNECT_TIME_MAX = 3;/);
+  assert.match(
+    playerSource,
+    /Artplayer\.RECONNECT_TIME_MAX = ARTPLAYER_RECONNECT_TIME_MAX;/
+  );
+});
+
 test("detail loading skeleton matches current desktop video page layout", () => {
   assert.match(detailPageSource, /className="vd-layout vd-skeleton"/);
   assert.match(detailPageSource, /className="vd-skeleton__summary"/);
@@ -55,6 +104,17 @@ test("detail loading skeleton matches current desktop video page layout", () => 
   assert.doesNotMatch(
     detailCss,
     /\.vd-skeleton__player\s*\{[^}]*box-shadow:\s*var\(--shadow-lg\)/s
+  );
+});
+
+test("detail loading skeleton actions stay inside mobile viewport", () => {
+  assert.match(
+    detailCss,
+    /@media \(max-width:\s*480px\)\s*\{[\s\S]*\.vd-skeleton__actions\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\) 44px/s
+  );
+  assert.match(
+    detailCss,
+    /@media \(max-width:\s*480px\)\s*\{[\s\S]*\.vd-skeleton__actions span:last-child\s*\{[^}]*width:\s*100%/s
   );
 });
 
@@ -106,6 +166,23 @@ test("detail player uses custom mobile gestures instead of ArtPlayer native gest
   assert.doesNotMatch(playerSource, /new VTTCue\(/);
   assert.doesNotMatch(playerSource, /onGestureHud\(`\$\{FAST_RATE\}x`/);
   assert.match(playerSource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
+});
+
+test("detail player treats backend video routes as native mp4 sources", () => {
+  assert.match(playerSource, /if \(isBackendNativeVideoRoute\(cleanPath\)\) return "mp4"/);
+  assert.match(playerSource, /pathname\.startsWith\("\/p\/stream\/"\)/);
+  assert.match(playerSource, /pathname\.startsWith\("\/p\/upload\/"\)/);
+  assert.match(playerSource, /pathname\.startsWith\("\/p\/spider91\/"\)/);
+  assert.doesNotMatch(playerSource, /crossOrigin/);
+});
+
+test("detail player sets referrer policy before loading media url", () => {
+  assert.match(playerSource, /const MEDIA_REFERRER_POLICY = "no-referrer"/);
+  assert.match(playerSource, /url:\s*""/);
+  assert.match(
+    playerSource,
+    /video\.setAttribute\("referrerpolicy", MEDIA_REFERRER_POLICY\);[\s\S]*art\.url = src;/
+  );
 });
 
 test("detail player fullscreen long-press rate hint lives inside ArtPlayer", () => {

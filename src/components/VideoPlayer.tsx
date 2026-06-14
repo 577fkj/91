@@ -5,7 +5,7 @@ import {
   type CSSProperties,
   type MutableRefObject,
 } from "react";
-import Artplayer, { type Option } from "artplayer";
+import Artplayer, { type Option, type SettingOption } from "artplayer";
 import type Hls from "hls.js";
 
 type Props = {
@@ -92,15 +92,27 @@ const LONG_PRESS_MS = 400;
 const FAST_RATE = 2;
 /** 默认倍速。 */
 const NORMAL_RATE = 1;
+/** ArtPlayer 内部播放失败自动重连次数。 */
+const ARTPLAYER_RECONNECT_TIME_MAX = 3;
 
 Artplayer.FAST_FORWARD_VALUE = FAST_RATE;
+Artplayer.RECONNECT_TIME_MAX = ARTPLAYER_RECONNECT_TIME_MAX;
 
-const SETTINGS_KEY = "video-site:player-settings";
 const DEFAULT_SETTINGS: PlayerSettings = {
   volume: 0.7,
   muted: false,
   playbackRate: 1,
   brightness: 1,
+};
+const DEFAULT_SETTING_LAYOUT = {
+  width: Artplayer.SETTING_WIDTH,
+  itemWidth: Artplayer.SETTING_ITEM_WIDTH,
+  itemHeight: Artplayer.SETTING_ITEM_HEIGHT,
+};
+const COMPACT_SETTING_LAYOUT = {
+  width: 172,
+  itemWidth: 148,
+  itemHeight: 30,
 };
 const ORIENTATION_CONTROL_NAME = "orientationToggle";
 const MANUAL_ORIENTATION_CLASS = "art-manual-orientation";
@@ -110,6 +122,7 @@ const PLAYER_GESTURE_HUD_CLASS = "video-player__art-gesture-hud";
 const PLAYER_GESTURE_HUD_ICON_CLASS = "video-player__art-gesture-hud-icon";
 const PLAYER_GESTURE_HUD_VALUE_CLASS = "video-player__art-gesture-hud-value";
 const PREVIEW_WIDTH = 168;
+const MEDIA_REFERRER_POLICY = "no-referrer";
 const BRIGHTNESS_MIN = 0.45;
 const BRIGHTNESS_MAX = 1.35;
 const GESTURE_ACTIVATION_PX = 12;
@@ -269,7 +282,28 @@ function inferSourceType(src: string) {
   const lower = src.toLowerCase();
   const cleanPath = lower.split("#")[0].split("?")[0];
   if (cleanPath.endsWith(".m3u8") || lower.includes(".m3u8")) return "m3u8";
+  if (isBackendNativeVideoRoute(cleanPath)) return "mp4";
   return undefined;
+}
+
+function isBackendNativeVideoRoute(cleanPath: string) {
+  const pathname = sourcePathname(cleanPath);
+  return (
+    pathname.startsWith("/p/stream/") ||
+    pathname.startsWith("/p/upload/") ||
+    pathname.startsWith("/p/spider91/")
+  );
+}
+
+function sourcePathname(src: string) {
+  if (src.startsWith("http://") || src.startsWith("https://")) {
+    try {
+      return new URL(src).pathname.toLowerCase();
+    } catch {
+      return src;
+    }
+  }
+  return src;
 }
 
 function mountArtPlayer({
@@ -298,19 +332,21 @@ function mountArtPlayer({
   onGestureHud: (label: string, duration?: number) => void;
 }) {
   const sourceType = inferSourceType(src);
-  const settings = readPlayerSettings();
   const fastActiveRef = { current: false };
   const loadHlsSource = createHlsSourceLoader(onError);
   const enableOrientationControl = shouldEnableMobileOrientationControl();
+  configureArtPlayerSettingLayout(
+    shouldUseCompactPlayerSettings(mount, enableOrientationControl)
+  );
   const option: Option = {
     id: "91-detail-player",
     container: mount,
-    url: src,
+    url: "",
     poster,
     theme: "var(--video-player-progress)",
     lang: "zh-cn",
-    volume: settings.volume,
-    muted: settings.muted,
+    volume: DEFAULT_SETTINGS.volume,
+    muted: DEFAULT_SETTINGS.muted,
     autoplay: false,
     autoSize: false,
     playbackRate: true,
@@ -336,6 +372,7 @@ function mountArtPlayer({
       preload: "metadata",
       playsInline: true,
     },
+    settings: [createLoopSetting()],
     controls: enableOrientationControl ? [createOrientationControl()] : [],
     contextmenu: [],
     cssVar: {
@@ -350,12 +387,15 @@ function mountArtPlayer({
   artRef.current = art;
 
   const video = art.video as VideoElementWithHls;
+  video.setAttribute("referrerpolicy", MEDIA_REFERRER_POLICY);
   video.setAttribute("aria-label", title);
   video.setAttribute("controlsList", "nodownload");
   video.setAttribute("webkit-playsinline", "true");
   video.disablePictureInPicture = false;
-  video.playbackRate = settings.playbackRate;
-  applyPlayerBrightness(art, settings.brightness);
+  video.loop = false;
+  video.playbackRate = DEFAULT_SETTINGS.playbackRate;
+  applyPlayerBrightness(art, DEFAULT_SETTINGS.brightness);
+  art.url = src;
 
   function preventContextMenu(event: Event) {
     event.preventDefault();
@@ -390,21 +430,6 @@ function mountArtPlayer({
     onFastChange(false);
   }
 
-  function handleVolumeChange() {
-    writePlayerSettings({
-      volume: clamp(video.volume, 0, 1),
-      muted: video.muted,
-    });
-  }
-
-  function handleRateChange() {
-    if (fastActiveRef.current) return;
-    if (!Number.isFinite(video.playbackRate)) return;
-    writePlayerSettings({
-      playbackRate: clamp(video.playbackRate, 0.5, 3),
-    });
-  }
-
   const handleFastChange = (active: boolean) => {
     fastActiveRef.current = active;
     setPlayerFastRateHint(art, active);
@@ -429,8 +454,6 @@ function mountArtPlayer({
     : noop;
 
   mount.addEventListener("contextmenu", preventContextMenu);
-  video.addEventListener("volumechange", handleVolumeChange);
-  video.addEventListener("ratechange", handleRateChange);
 
   art.on("video:loadstart", handleLoadStart);
   art.on("video:loadeddata", handleReady);
@@ -449,8 +472,6 @@ function mountArtPlayer({
     unbindOrientationToggle();
     setPlayerFastRateHint(art, false);
     mount.removeEventListener("contextmenu", preventContextMenu);
-    video.removeEventListener("volumechange", handleVolumeChange);
-    video.removeEventListener("ratechange", handleRateChange);
     destroyHls(video);
     art.off("video:loadstart", handleLoadStart);
     art.off("video:loadeddata", handleReady);
@@ -478,8 +499,40 @@ function shouldEnableMobileOrientationControl() {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 }
 
+function shouldUseCompactPlayerSettings(
+  mount: HTMLElement,
+  mobileControls: boolean
+) {
+  const narrowViewport =
+    window.matchMedia?.("(max-width: 640px)").matches ??
+    window.innerWidth <= 640;
+  return mobileControls || narrowViewport || mount.clientWidth <= 640;
+}
+
+function configureArtPlayerSettingLayout(compact: boolean) {
+  const layout = compact ? COMPACT_SETTING_LAYOUT : DEFAULT_SETTING_LAYOUT;
+  Artplayer.SETTING_WIDTH = layout.width;
+  Artplayer.SETTING_ITEM_WIDTH = layout.itemWidth;
+  Artplayer.SETTING_ITEM_HEIGHT = layout.itemHeight;
+}
+
 function shouldEnableMobileGestures() {
   return shouldEnableMobileOrientationControl();
+}
+
+function createLoopSetting() {
+  return {
+    name: "mind-loop",
+    html: "洗脑循环",
+    tooltip: "关",
+    switch: false,
+    onSwitch(this: Artplayer, item: SettingOption) {
+      const next = !item.switch;
+      this.video.loop = next;
+      item.tooltip = next ? "开" : "关";
+      return next;
+    },
+  };
 }
 
 function isPlayerExpanded(art: Artplayer) {
@@ -888,12 +941,10 @@ function getPlayerBrightness(art: Artplayer) {
     "--video-player-brightness"
   );
   if (!raw.trim()) return DEFAULT_SETTINGS.brightness;
-  return clampNumber(
-    Number(raw),
-    DEFAULT_SETTINGS.brightness,
-    BRIGHTNESS_MIN,
-    BRIGHTNESS_MAX
-  );
+  const value = Number(raw);
+  return Number.isFinite(value)
+    ? clamp(value, BRIGHTNESS_MIN, BRIGHTNESS_MAX)
+    : DEFAULT_SETTINGS.brightness;
 }
 
 function mobileGestureSeekSpan(duration: number) {
@@ -1297,15 +1348,6 @@ function bindMobilePlayerGestures(
           );
         }
       }
-    } else if (state.mode === "brightness") {
-      writePlayerSettings({
-        brightness: getPlayerBrightness(art),
-      });
-    } else if (state.mode === "volume") {
-      writePlayerSettings({
-        volume: clamp(video.volume, 0, 1),
-        muted: video.muted,
-      });
     }
 
     resetGesture();
@@ -1377,25 +1419,6 @@ function bindProgressPreview(
   };
 }
 
-function readPlayerSettings(): PlayerSettings {
-  const saved = safeGetJSON<Partial<PlayerSettings>>(SETTINGS_KEY) ?? {};
-  return {
-    volume: clampNumber(saved.volume, DEFAULT_SETTINGS.volume, 0, 1),
-    muted: typeof saved.muted === "boolean" ? saved.muted : DEFAULT_SETTINGS.muted,
-    playbackRate: clampNumber(saved.playbackRate, DEFAULT_SETTINGS.playbackRate, 0.5, 3),
-    brightness: clampNumber(
-      saved.brightness,
-      DEFAULT_SETTINGS.brightness,
-      BRIGHTNESS_MIN,
-      BRIGHTNESS_MAX
-    ),
-  };
-}
-
-function writePlayerSettings(patch: Partial<PlayerSettings>) {
-  safeSetJSON(SETTINGS_KEY, { ...readPlayerSettings(), ...patch });
-}
-
 function mediaErrorMessage(error: MediaError | null) {
   switch (error?.code) {
     case MediaError.MEDIA_ERR_ABORTED:
@@ -1438,34 +1461,6 @@ function fallbackCopyText(text: string) {
   } finally {
     textarea.remove();
   }
-}
-
-function safeGetJSON<T>(key: string): T | null {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-function safeSetJSON(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
-}
-
-function clampNumber(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number
-) {
-  return typeof value === "number" && Number.isFinite(value)
-    ? clamp(value, min, max)
-    : fallback;
 }
 
 function clamp(n: number, min: number, max: number) {
