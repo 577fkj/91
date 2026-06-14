@@ -834,6 +834,7 @@ function VideoTitleCell({ video: v }: { video: api.AdminVideo }) {
 function PreviewStatus({ s }: { s: string }) {
   if (s === "ready") return <span className="admin-status is-ok">就绪</span>;
   if (s === "failed") return <span className="admin-status is-error">失败</span>;
+  if (s === "disabled") return <span className="admin-status">已关闭</span>;
   if (s === "skipped") return <span className="admin-status">跳过</span>;
   return <span className="admin-status is-pending">待生成</span>;
 }

@@ -259,6 +259,13 @@ test("crawler management is a separate admin section", () => {
   assert.match(crawlerPageSource, /测试通过/);
   assert.match(crawlerPageSource, /Spider91UploadTargetField/);
   assert.match(crawlerPageSource, /uploadDriveId/);
+  assert.match(crawlerPageSource, /api\.setDriveTeaserEnabled/);
+  assert.match(crawlerPageSource, /admin-crawler-preview-card-toggle/);
+  assert.match(crawlerPageSource, /预览：开/);
+  assert.match(crawlerPageSource, /预览：关/);
+  assert.match(crawlerPageSource, /aria-pressed=\{crawler\.teaserEnabled\}/);
+  assert.doesNotMatch(crawlerPageSource, /teaserEnabled: form\.teaserEnabled/);
+  assert.doesNotMatch(crawlerPageSource, /aria-pressed=\{form\.teaserEnabled\}/);
   assert.match(crawlerPageSource, /UPLOAD_TARGET_KINDS/);
   assert.doesNotMatch(crawlerPageSource, /新建脚本/);
   assert.doesNotMatch(crawlerPageSource, /爬虫 ID/);
@@ -274,6 +281,8 @@ test("crawler management is a separate admin section", () => {
   assert.doesNotMatch(crawlerPageSource, /内置 91/);
   assert.match(apiSource, /type AdminCrawler/);
   assert.match(apiSource, /uploadDriveId\?: string/);
+  assert.match(apiSource, /teaserEnabled: boolean/);
+  assert.doesNotMatch(apiSource, /teaserEnabled\?: boolean/);
   assert.match(apiSource, /"\/crawlers"/);
   assert.match(apiSource, /"\/crawlers\/import-file"/);
   assert.match(apiSource, /"\/crawlers\/import-url"/);

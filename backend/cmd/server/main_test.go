@@ -227,6 +227,53 @@ func TestRegisterPreviewWorkersBackfillsHistoricalFingerprints(t *testing.T) {
 	t.Fatalf("fingerprint status=%q sampled=%q, want ready with hash", got.FingerprintStatus, got.SampledSHA256)
 }
 
+func TestUpdateScriptCrawlerRunStatePreservesCurrentTeaserSwitch(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	if err := cat.UpsertDrive(ctx, &catalog.Drive{
+		ID:     "crawler-id",
+		Kind:   scriptcrawler.Kind,
+		Name:   "Crawler",
+		RootID: "/",
+		Credentials: map[string]string{
+			"script_path": "/tmp/crawler.py",
+			"target_new":  "10",
+		},
+		TeaserEnabled: false,
+	}); err != nil {
+		t.Fatalf("seed crawler drive: %v", err)
+	}
+	if err := cat.SetDriveTeaserEnabled(ctx, "crawler-id", true); err != nil {
+		t.Fatalf("toggle teaser: %v", err)
+	}
+
+	app := &App{cat: cat}
+	if err := app.updateScriptCrawlerRunState(ctx, "crawler-id", nil); err != nil {
+		t.Fatalf("update run state: %v", err)
+	}
+	got, err := cat.GetDrive(ctx, "crawler-id")
+	if err != nil {
+		t.Fatalf("get crawler drive: %v", err)
+	}
+	if !got.TeaserEnabled {
+		t.Fatal("teaserEnabled = false after run state update, want preserved true")
+	}
+	if got.Status != "ok" || got.LastError != "" {
+		t.Fatalf("status=%q lastError=%q, want ok with no error", got.Status, got.LastError)
+	}
+	if got.Credentials["last_crawl_at"] == "" || got.Credentials["target_new"] != "10" {
+		t.Fatalf("credentials after run state update = %#v", got.Credentials)
+	}
+}
+
 func TestStopDriveTasksCancelsQueuedTasksAndReplacesWorkers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

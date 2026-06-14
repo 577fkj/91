@@ -84,7 +84,7 @@ export type AdminDrive = {
   status: string;
   lastError?: string;
   hasCredential: boolean;
-  /** 当前是否给该盘生成预览视频/封面（per-drive 开关，替代旧的全局 preview.enabled）。 */
+  /** 当前是否给该盘生成预览视频（per-drive 开关，替代旧的全局 preview.enabled；封面不受影响）。 */
   teaserEnabled: boolean;
   /**
    * 用户在 admin 配置的"扫描跳过目录"集合（drive 侧目录 fileID 列表）。
@@ -212,6 +212,7 @@ export type AdminCrawler = {
   proxy?: string;
   targetNew?: string;
   uploadDriveId?: string;
+  teaserEnabled: boolean;
   lastCrawlAt?: number;
   scanGenerationStatus?: DriveGenerationStatus;
   thumbnailGenerationStatus?: DriveGenerationStatus;
