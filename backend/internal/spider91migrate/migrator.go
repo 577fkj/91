@@ -101,15 +101,16 @@ const (
 )
 
 type migrationPlan struct {
-	source             Spider91LocalSource
-	row                *catalog.Drive
-	sourceKinds        []string
-	targetDriveID      string
-	target             uploadTarget
-	uploadDir          string
-	keepLatestN        int
-	requireAssetsReady bool
-	legacyBackfill     bool
+	source              Spider91LocalSource
+	row                 *catalog.Drive
+	sourceKinds         []string
+	targetDriveID       string
+	target              uploadTarget
+	uploadDir           string
+	keepLatestN         int
+	requireAssetsReady  bool
+	requirePreviewReady bool
+	legacyBackfill      bool
 }
 
 // pikpakAdapter / p115Adapter / p123Adapter / onedriveAdapter / googledriveAdapter / wopanAdapter / guangyapanAdapter 把具体 driver 包装成 uploadTarget。
@@ -597,14 +598,15 @@ func (m *Migrator) migrationPlans(ctx context.Context) []migrationPlan {
 				continue
 			}
 			out = append(out, migrationPlan{
-				source:             src,
-				row:                row,
-				sourceKinds:        crawlerSourceKindsForRow(row),
-				targetDriveID:      resolvedID,
-				target:             target,
-				uploadDir:          scriptCrawlerUploadDir(row.ID),
-				keepLatestN:        0,
-				requireAssetsReady: true,
+				source:              src,
+				row:                 row,
+				sourceKinds:         crawlerSourceKindsForRow(row),
+				targetDriveID:       resolvedID,
+				target:              target,
+				uploadDir:           scriptCrawlerUploadDir(row.ID),
+				keepLatestN:         0,
+				requireAssetsReady:  true,
+				requirePreviewReady: row.TeaserEnabled,
 			})
 		case spider91.Kind:
 			if m.cfg.GetTargetDriveID == nil {
@@ -838,7 +840,7 @@ func (m *Migrator) migrateDrive(ctx context.Context, plan migrationPlan) (int, e
 		}
 
 		if plan.requireAssetsReady {
-			ready, err := m.crawlerVideoAssetsReady(ctx, v)
+			ready, err := m.crawlerVideoAssetsReady(ctx, v, plan.requirePreviewReady)
 			if err != nil {
 				log.Printf("[spider91migrate] %s check generated assets: %v", v.ID, err)
 				continue
@@ -914,13 +916,16 @@ func (m *Migrator) findVideoForLocalFile(ctx context.Context, plan migrationPlan
 	return nil
 }
 
-func (m *Migrator) crawlerVideoAssetsReady(ctx context.Context, v *catalog.Video) (bool, error) {
+func (m *Migrator) crawlerVideoAssetsReady(ctx context.Context, v *catalog.Video, requirePreview bool) (bool, error) {
 	if v == nil {
 		return false, nil
 	}
 	fingerprintReady := strings.EqualFold(strings.TrimSpace(v.FingerprintStatus), "ready") || strings.TrimSpace(v.SampledSHA256) != ""
 	if !fingerprintReady {
 		return false, nil
+	}
+	if !requirePreview {
+		return true, nil
 	}
 	if strings.EqualFold(strings.TrimSpace(v.PreviewStatus), "ready") {
 		return true, nil

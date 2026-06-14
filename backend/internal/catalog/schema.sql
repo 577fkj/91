@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS videos (
     thumbnail_failures INTEGER DEFAULT 0,        -- consecutive transient thumbnail generation failures
     preview_file_id  TEXT,                      -- deprecated: 旧版回写网盘后的预览视频 file id
     preview_local    TEXT,                      -- 本地预览视频路径（兜底）
-    preview_status   TEXT DEFAULT 'pending',    -- pending / ready / failed
+    preview_status   TEXT DEFAULT 'pending',    -- pending / ready / failed / disabled
     transcode_status TEXT DEFAULT '',           -- '' / pending / ready / skipped / failed（浏览器兼容性转码）
     transcode_error  TEXT DEFAULT '',
     transcoded_file_id TEXT DEFAULT '',         -- 转码产物在同一 drive 上的 fileID，播放源优先用它
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS drives (
     credentials   TEXT,                          -- JSON: cookie / refresh_token 等
     status        TEXT DEFAULT 'disconnected',   -- disconnected / ok / error
     last_error    TEXT,
-    -- 是否给该盘生成预览视频/封面：1 开 / 0 关。
+    -- 是否给该盘生成预览视频：1 开 / 0 关。封面生成不受影响。
     -- 替代了早期的全局 preview.enabled 设置（保留旧 setting 行不再读）。
     teaser_enabled INTEGER NOT NULL DEFAULT 1,
     -- 扫描时要跳过的目录 ID 集合（JSON array of string）。命中其中任意一个的目录及其

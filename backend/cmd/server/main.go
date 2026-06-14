@@ -1325,6 +1325,7 @@ func (a *App) attachScriptCrawler(d *catalog.Drive, drv *scriptcrawler.Driver) {
 		CommonThumbDir: a.commonThumbsDir(),
 		ProxyURL:       proxyURL,
 		ConfigJSON:     configJSON,
+		DisablePreview: !d.TeaserEnabled,
 		OnProgress: func(progress scriptcrawler.CrawlProgress) {
 			scanned := progress.Checked
 			if scanned < progress.TotalEntries {
@@ -3264,18 +3265,7 @@ func (a *App) runScriptCrawlerCrawlWithTaskContext(ctx context.Context, driveID 
 			driveID, res.TargetNew, res.CandidateBudget, res.TotalEntries, res.NewVideos, res.Skipped, res.Failed, res.SeenSnapshot)
 	}
 
-	if d.Credentials == nil {
-		d.Credentials = make(map[string]string)
-	}
-	d.Credentials["last_crawl_at"] = strconv.FormatInt(time.Now().Unix(), 10)
-	if runErr != nil {
-		d.Status = "error"
-		d.LastError = runErr.Error()
-	} else {
-		d.Status = "ok"
-		d.LastError = ""
-	}
-	if err := a.cat.UpsertDrive(ctx, d); err != nil {
+	if err := a.updateScriptCrawlerRunState(ctx, driveID, runErr); err != nil {
 		log.Printf("[scriptcrawler] drive=%s update last_crawl_at: %v", driveID, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -3291,6 +3281,25 @@ func (a *App) runScriptCrawlerCrawlWithTaskContext(ctx context.Context, driveID 
 	a.scheduleFingerprintBackfill(ctx, driveID, fingerprintWorker)
 	a.enqueueDriveGeneration(ctx, driveID, worker, thumbWorker)
 	return runErr == nil
+}
+
+func (a *App) updateScriptCrawlerRunState(ctx context.Context, driveID string, runErr error) error {
+	d, err := a.cat.GetDrive(ctx, driveID)
+	if err != nil {
+		return err
+	}
+	if d.Credentials == nil {
+		d.Credentials = make(map[string]string)
+	}
+	d.Credentials["last_crawl_at"] = strconv.FormatInt(time.Now().Unix(), 10)
+	if runErr != nil {
+		d.Status = "error"
+		d.LastError = runErr.Error()
+	} else {
+		d.Status = "ok"
+		d.LastError = ""
+	}
+	return a.cat.UpsertDrive(ctx, d)
 }
 
 func (a *App) runSpider91MigrationAfterManualCrawl(ctx context.Context, driveID string) {

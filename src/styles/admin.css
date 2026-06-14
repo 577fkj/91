@@ -768,6 +768,25 @@
   gap: var(--space-2);
 }
 
+.admin-crawler-preview-card-toggle {
+  min-width: 96px;
+  padding-inline: 10px;
+}
+
+.admin-crawler-preview-card-toggle.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  box-shadow: none;
+}
+
+.admin-crawler-preview-card-toggle.is-on:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  color: var(--text-on-accent);
+  box-shadow: none;
+}
+
 .admin-crawler-row__delete {
   padding-inline: 10px;
 }

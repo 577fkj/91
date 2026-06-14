@@ -944,7 +944,8 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 				"script_path":     scriptPath,
 				"upload_drive_id": "p115-target",
 			},
-			Status: "ok",
+			Status:        "ok",
+			TeaserEnabled: false,
 		},
 		{
 			ID:          "p115-target",
@@ -1027,6 +1028,7 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 		Kind             string `json:"kind"`
 		Proxy            string `json:"proxy"`
 		UploadDriveID    string `json:"uploadDriveId"`
+		TeaserEnabled    bool   `json:"teaserEnabled"`
 		LastCrawlAt      int64  `json:"lastCrawlAt"`
 		TotalCrawled     int    `json:"totalCrawledCount"`
 		LocalVideos      int    `json:"localVideoCount"`
@@ -1038,11 +1040,12 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	byID := map[string]struct {
+	type crawlerListRow struct {
 		Name             string
 		Kind             string
 		Proxy            string
 		UploadDriveID    string
+		TeaserEnabled    bool
 		LastCrawlAt      int64
 		TotalCrawled     int
 		LocalVideos      int
@@ -1050,25 +1053,15 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 		ThumbnailReady   int
 		TeaserReady      int
 		FingerprintReady int
-	}{}
+	}
+	byID := map[string]crawlerListRow{}
 	for _, d := range got {
-		byID[d.ID] = struct {
-			Name             string
-			Kind             string
-			Proxy            string
-			UploadDriveID    string
-			LastCrawlAt      int64
-			TotalCrawled     int
-			LocalVideos      int
-			MigratedVideo    int
-			ThumbnailReady   int
-			TeaserReady      int
-			FingerprintReady int
-		}{
+		byID[d.ID] = crawlerListRow{
 			Name:             d.Name,
 			Kind:             d.Kind,
 			Proxy:            d.Proxy,
 			UploadDriveID:    d.UploadDriveID,
+			TeaserEnabled:    d.TeaserEnabled,
 			LastCrawlAt:      d.LastCrawlAt,
 			TotalCrawled:     d.TotalCrawled,
 			LocalVideos:      d.LocalVideos,
@@ -1095,6 +1088,9 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	}
 	if byID["crawler-spider91"].UploadDriveID != "p115-target" {
 		t.Fatalf("uploadDriveId = %q, want p115-target", byID["crawler-spider91"].UploadDriveID)
+	}
+	if byID["crawler-spider91"].TeaserEnabled {
+		t.Fatal("teaserEnabled = true, want false from crawler drive")
 	}
 	if byID["crawler-spider91"].LastCrawlAt != 1800000000 {
 		t.Fatalf("lastCrawlAt = %d, want 1800000000", byID["crawler-spider91"].LastCrawlAt)
@@ -1167,11 +1163,12 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 	}
 
 	// 带脚本路径时正常保存，且请求中的 builtin 字段被忽略，不会写入凭证。
-	body, err := json.Marshal(map[string]string{
-		"id":         "spider91-main",
-		"builtin":    "spider91",
-		"scriptPath": scriptPath,
-		"targetNew":  "15",
+	body, err := json.Marshal(map[string]any{
+		"id":            "spider91-main",
+		"builtin":       "spider91",
+		"scriptPath":    scriptPath,
+		"targetNew":     "15",
+		"teaserEnabled": false,
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -1198,6 +1195,9 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 	}
 	if got.Credentials["script_path"] != scriptPath {
 		t.Fatalf("script_path = %q, want %q", got.Credentials["script_path"], scriptPath)
+	}
+	if got.TeaserEnabled {
+		t.Fatal("teaserEnabled = true, want false from request")
 	}
 }
 
@@ -1285,12 +1285,21 @@ func TestHandleUpsertCrawlerPersistsAndValidatesUploadDrive(t *testing.T) {
 			t.Fatalf("seed drive %s: %v", d.ID, err)
 		}
 	}
-	srv := &AdminServer{Catalog: cat}
+	var teaserCallbackID string
+	var teaserCallbackEnabled bool
+	srv := &AdminServer{
+		Catalog: cat,
+		OnTeaserEnabledChanged: func(id string, enabled bool) {
+			teaserCallbackID = id
+			teaserCallbackEnabled = enabled
+		},
+	}
 
-	body, err := json.Marshal(map[string]string{
+	body, err := json.Marshal(map[string]any{
 		"id":            "crawler-upload",
 		"scriptPath":    scriptPath,
 		"uploadDriveId": "p115-target",
+		"teaserEnabled": false,
 	})
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
@@ -1307,6 +1316,12 @@ func TestHandleUpsertCrawlerPersistsAndValidatesUploadDrive(t *testing.T) {
 	}
 	if got.Credentials["upload_drive_id"] != "p115-target" {
 		t.Fatalf("upload_drive_id = %q, want p115-target", got.Credentials["upload_drive_id"])
+	}
+	if got.TeaserEnabled {
+		t.Fatal("teaserEnabled = true, want false")
+	}
+	if teaserCallbackID != "" {
+		t.Fatalf("teaser callback on create = %q, want none", teaserCallbackID)
 	}
 
 	body, err = json.Marshal(map[string]string{
@@ -1329,6 +1344,38 @@ func TestHandleUpsertCrawlerPersistsAndValidatesUploadDrive(t *testing.T) {
 	}
 	if got.Credentials["upload_drive_id"] != "wopan-target" {
 		t.Fatalf("upload_drive_id = %q, want wopan-target", got.Credentials["upload_drive_id"])
+	}
+	if got.TeaserEnabled {
+		t.Fatal("teaserEnabled after edit without field = true, want preserved false")
+	}
+	if teaserCallbackID != "" {
+		t.Fatalf("teaser callback after preserved edit = %q, want none", teaserCallbackID)
+	}
+
+	body, err = json.Marshal(map[string]any{
+		"id":            "crawler-upload",
+		"scriptPath":    scriptPath,
+		"uploadDriveId": "wopan-target",
+		"teaserEnabled": true,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/crawlers", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	srv.handleUpsertCrawler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("enable teaser status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	got, err = cat.GetDrive(ctx, "crawler-upload")
+	if err != nil {
+		t.Fatalf("get crawler after teaser enable: %v", err)
+	}
+	if !got.TeaserEnabled {
+		t.Fatal("teaserEnabled after explicit enable = false, want true")
+	}
+	if teaserCallbackID != "crawler-upload" || !teaserCallbackEnabled {
+		t.Fatalf("teaser callback = %q/%v, want crawler-upload/true", teaserCallbackID, teaserCallbackEnabled)
 	}
 
 	body, err = json.Marshal(map[string]string{

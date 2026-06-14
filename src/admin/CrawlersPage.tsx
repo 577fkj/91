@@ -18,6 +18,8 @@ import {
   Link as LinkIcon,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
   RefreshCw,
   TestTube,
   Trash2,
@@ -56,6 +58,7 @@ export function CrawlersPage() {
   const [expandedId, setExpandedId] = useState("");
   const [runningId, setRunningId] = useState("");
   const [stoppingId, setStoppingId] = useState("");
+  const [togglingTeaserId, setTogglingTeaserId] = useState("");
   // undefined = 编辑器关闭；null = 新建；其余 = 编辑已有爬虫
   const [editorTarget, setEditorTarget] = useState<api.AdminCrawler | null | undefined>(undefined);
   const [deleteTarget, setDeleteTarget] = useState<api.AdminCrawler | null>(null);
@@ -133,6 +136,23 @@ export function CrawlersPage() {
       show(e instanceof Error ? e.message : "停止失败", "error");
     } finally {
       setStoppingId("");
+    }
+  }
+
+  async function toggleTeaser(crawler: api.AdminCrawler) {
+    const next = !crawler.teaserEnabled;
+    setTogglingTeaserId(crawler.id);
+    setList((prev) => prev.map((item) => (item.id === crawler.id ? { ...item, teaserEnabled: next } : item)));
+    try {
+      const resp = await api.setDriveTeaserEnabled(crawler.id, next);
+      setList((prev) => prev.map((item) => (item.id === crawler.id ? { ...item, teaserEnabled: resp.teaserEnabled } : item)));
+      show(resp.teaserEnabled ? `已开启「${crawler.name}」预览视频生成` : `已关闭「${crawler.name}」预览视频生成`, "success");
+      await refresh(true);
+    } catch (e) {
+      setList((prev) => prev.map((item) => (item.id === crawler.id ? { ...item, teaserEnabled: crawler.teaserEnabled } : item)));
+      show(e instanceof Error ? e.message : "切换预览视频失败", "error");
+    } finally {
+      setTogglingTeaserId("");
     }
   }
 
@@ -214,9 +234,11 @@ export function CrawlersPage() {
                   expanded={expandedId === crawler.id}
                   running={runningId === crawler.id}
                   stopping={stoppingId === crawler.id}
+                  togglingTeaser={togglingTeaserId === crawler.id}
                   onToggle={() => setExpandedId(expandedId === crawler.id ? "" : crawler.id)}
                   onRun={() => run(crawler)}
                   onStop={() => stop(crawler)}
+                  onToggleTeaser={() => toggleTeaser(crawler)}
                   onEdit={() => setEditorTarget(crawler)}
                   onDelete={() => setDeleteTarget(crawler)}
                 />
@@ -290,9 +312,11 @@ function CrawlerRow({
   expanded,
   running,
   stopping,
+  togglingTeaser,
   onToggle,
   onRun,
   onStop,
+  onToggleTeaser,
   onEdit,
   onDelete,
 }: {
@@ -300,9 +324,11 @@ function CrawlerRow({
   expanded: boolean;
   running: boolean;
   stopping: boolean;
+  togglingTeaser: boolean;
   onToggle: () => void;
   onRun: () => void;
   onStop: () => void;
+  onToggleTeaser: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -343,6 +369,17 @@ function CrawlerRow({
           <ChevronDown size={16} className="admin-crawler-row__chevron" />
         </button>
         <div className="admin-crawler-row__actions">
+          <button
+            className={`admin-btn admin-crawler-preview-card-toggle ${crawler.teaserEnabled ? "is-on" : ""}`}
+            type="button"
+            onClick={onToggleTeaser}
+            disabled={togglingTeaser}
+            aria-pressed={crawler.teaserEnabled}
+            title={crawler.teaserEnabled ? "关闭后，该爬虫新爬取的视频不再生成预览视频" : "开启后，该爬虫新爬取的视频会生成预览视频"}
+          >
+            {crawler.teaserEnabled ? <Power size={13} /> : <PowerOff size={13} />}
+            <span>{crawler.teaserEnabled ? "预览：开" : "预览：关"}</span>
+          </button>
           {busy ? (
             <button className="admin-btn is-stop" type="button" onClick={onStop} disabled={stopping}>
               <CircleStop size={13} /> {stopping ? "停止中..." : "停止"}

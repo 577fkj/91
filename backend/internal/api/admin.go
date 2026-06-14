@@ -469,7 +469,8 @@ func (a *AdminServer) handleListDrives(w http.ResponseWriter, r *http.Request) {
 		Status        string `json:"status"`
 		LastError     string `json:"lastError,omitempty"`
 		HasCredential bool   `json:"hasCredential"`
-		// TeaserEnabled 控制是否给本盘生成预览视频/封面。前端用它在网盘列表/编辑表单展示开关状态。
+		// TeaserEnabled 控制是否给本盘生成预览视频；封面生成不受影响。
+		// 前端用它在网盘列表/编辑表单展示开关状态。
 		TeaserEnabled bool `json:"teaserEnabled"`
 		// SkipDirIDs 是用户在 admin 配置的"扫描跳过目录"集合（drive 侧目录 fileID）。
 		// 前端用它在"设置跳过目录"弹窗里回显已选项；JSON 字段名 camelCase 与
@@ -591,7 +592,7 @@ type upsertDriveReq struct {
 	// Deprecated: 扫描起点已固定为 rootId；保留字段只为兼容旧客户端请求体。
 	ScanRootID  string            `json:"scanRootId"`
 	Credentials map[string]string `json:"credentials"`
-	// TeaserEnabled 是 per-drive 预览视频/封面生成开关。
+	// TeaserEnabled 是 per-drive 预览视频生成开关；封面生成不受影响。
 	// 用 *bool 区分 "未传" / "传了 false"：未传时表示客户端不打算改这个字段，
 	// 沿用 catalog 现有值；新建时未传一律默认开启（true）。
 	TeaserEnabled *bool `json:"teaserEnabled,omitempty"`
@@ -690,6 +691,7 @@ type crawlerDTO struct {
 	Proxy                       string           `json:"proxy,omitempty"`
 	TargetNew                   string           `json:"targetNew,omitempty"`
 	UploadDriveID               string           `json:"uploadDriveId,omitempty"`
+	TeaserEnabled               bool             `json:"teaserEnabled"`
 	LastCrawlAt                 int64            `json:"lastCrawlAt,omitempty"`
 	ScanGenerationStatus        GenerationStatus `json:"scanGenerationStatus"`
 	ThumbnailGenerationStatus   GenerationStatus `json:"thumbnailGenerationStatus"`
@@ -717,6 +719,7 @@ type upsertCrawlerReq struct {
 	Proxy           string `json:"proxy"`
 	TargetNew       string `json:"targetNew"`
 	UploadDriveID   string `json:"uploadDriveId"`
+	TeaserEnabled   *bool  `json:"teaserEnabled,omitempty"`
 }
 
 func (a *AdminServer) handleListCrawlers(w http.ResponseWriter, r *http.Request) {
@@ -778,6 +781,7 @@ func (a *AdminServer) crawlerDTOForDrive(d *catalog.Drive, assets catalog.Crawle
 		Proxy:                       strings.TrimSpace(d.Credentials["proxy"]),
 		TargetNew:                   strings.TrimSpace(d.Credentials["target_new"]),
 		UploadDriveID:               strings.TrimSpace(d.Credentials["upload_drive_id"]),
+		TeaserEnabled:               d.TeaserEnabled,
 		LastCrawlAt:                 lastCrawlAt,
 		ScanGenerationStatus:        generation.Scan,
 		ThumbnailGenerationStatus:   generation.Thumbnail,
@@ -864,6 +868,13 @@ func (a *AdminServer) handleUpsertCrawler(w http.ResponseWriter, r *http.Request
 		return
 	}
 	name := meta.Name
+	teaserEnabled := true
+	if existing != nil {
+		teaserEnabled = existing.TeaserEnabled
+	}
+	if body.TeaserEnabled != nil {
+		teaserEnabled = *body.TeaserEnabled
+	}
 	if id == "" {
 		generatedID, err := a.generateCrawlerID(r.Context(), name)
 		if err != nil {
@@ -879,14 +890,14 @@ func (a *AdminServer) handleUpsertCrawler(w http.ResponseWriter, r *http.Request
 		RootID:        "/",
 		Credentials:   merged,
 		Status:        "disconnected",
-		TeaserEnabled: true,
-	}
-	if existing != nil {
-		d.TeaserEnabled = existing.TeaserEnabled
+		TeaserEnabled: teaserEnabled,
 	}
 	if err := a.Catalog.UpsertDrive(r.Context(), d); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
+	}
+	if existing != nil && existing.TeaserEnabled != teaserEnabled && a.OnTeaserEnabledChanged != nil {
+		a.OnTeaserEnabledChanged(id, teaserEnabled)
 	}
 	if a.OnDriveSaved != nil {
 		if err := a.OnDriveSaved(id); err != nil {
