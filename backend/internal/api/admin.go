@@ -53,6 +53,7 @@ type AdminServer struct {
 	OnDriveDeleteCleanup      func(ctx context.Context, driveID string) (int, error)
 	OnDriveRemoved            func(driveID string)
 	OnScanRequested           func(driveID string) bool
+	OnCrawlerUploadRequested  func(driveID string) (bool, string)
 	OnStopDriveTasks          func(driveID string) bool
 	OnStopAllTasks            func() int
 	OnRegenPreview            func(videoID string)
@@ -194,6 +195,7 @@ func (a *AdminServer) Register(r chi.Router) {
 			r.Post("/crawlers/test-script", a.handleTestCrawlerScript)
 			r.Delete("/crawlers/{id}", a.handleDeleteCrawler)
 			r.Post("/crawlers/{id}/run", a.handleRunCrawler)
+			r.Post("/crawlers/{id}/upload", a.handleUploadCrawlerVideos)
 			r.Post("/crawlers/{id}/tasks/stop", a.handleStopCrawlerTasks)
 
 			// 视频
@@ -1287,6 +1289,104 @@ func (a *AdminServer) handleRunCrawler(w http.ResponseWriter, r *http.Request) {
 		resp["message"] = driveTaskBusyMessage
 	}
 	writeJSON(w, http.StatusAccepted, resp)
+}
+
+func (a *AdminServer) handleUploadCrawlerVideos(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	d, err := a.Catalog.GetDrive(r.Context(), id)
+	if err != nil || d == nil || !isConfiguredCrawlerDrive(d) {
+		http.Error(w, "crawler not found", http.StatusNotFound)
+		return
+	}
+	status := a.nightlyJobStatus()
+	if status.Running || status.Queued {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"ok":       true,
+			"accepted": false,
+			"message":  fullScanBusyMessage,
+			"status":   status,
+		})
+		return
+	}
+
+	assets, err := a.Catalog.CountCrawlerAssets(r.Context(), d.ID, crawlerVideoIDPrefixes(d))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	generation := DriveGenerationStatuses{}
+	if a.GetDriveGenerationStatuses != nil {
+		generation = a.GetDriveGenerationStatuses()[d.ID]
+	}
+	if reason := crawlerUploadBlockedReason(d, assets, generation); reason != "" {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"ok":       true,
+			"accepted": false,
+			"message":  reason,
+		})
+		return
+	}
+
+	accepted := true
+	message := ""
+	if a.OnCrawlerUploadRequested != nil {
+		accepted, message = a.OnCrawlerUploadRequested(id)
+	}
+	resp := map[string]any{"ok": true, "accepted": accepted}
+	if !accepted {
+		if strings.TrimSpace(message) == "" {
+			message = driveTaskBusyMessage
+		}
+		resp["message"] = message
+	}
+	writeJSON(w, http.StatusAccepted, resp)
+}
+
+func crawlerUploadBlockedReason(d *catalog.Drive, assets catalog.CrawlerAssetCounts, generation DriveGenerationStatuses) string {
+	if d == nil || !isConfiguredCrawlerDrive(d) {
+		return "爬虫不存在"
+	}
+	if strings.TrimSpace(d.Credentials["upload_drive_id"]) == "" {
+		return "请先配置上传网盘"
+	}
+	if assets.Local <= 0 {
+		return "没有待上传的本地视频"
+	}
+	if crawlerGenerationBusy(generation) {
+		return "当前爬虫有正在进行的任务，请稍后重试"
+	}
+	if assets.Fingerprint.Pending > 0 {
+		return "还有待生成的视频指纹"
+	}
+	if assets.Fingerprint.Failed > 0 {
+		return "存在指纹生成失败的视频，请先重试或处理失败项"
+	}
+	if d.TeaserEnabled {
+		if assets.Teaser.Pending > 0 {
+			return "还有待生成的预览视频"
+		}
+		if assets.Teaser.Failed > 0 {
+			return "存在预览视频生成失败的视频，请先重试或处理失败项"
+		}
+	}
+	return ""
+}
+
+func crawlerGenerationBusy(g DriveGenerationStatuses) bool {
+	return generationBusy(g.Scan) ||
+		generationBusy(g.Thumbnail) ||
+		generationBusy(g.Preview) ||
+		generationBusy(g.Fingerprint) ||
+		generationBusy(g.Upload)
+}
+
+func generationBusy(g GenerationStatus) bool {
+	switch strings.TrimSpace(g.State) {
+	case "", "idle":
+		return false
+	default:
+		return true
+	}
 }
 
 func (a *AdminServer) handleStopCrawlerTasks(w http.ResponseWriter, r *http.Request) {

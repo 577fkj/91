@@ -20,11 +20,12 @@ import (
 )
 
 type Driver struct {
-	id     string
-	cookie string
-	rootID string
-	client *sdk.Pan115Client
-	ua     string
+	id            string
+	cookie        string
+	rootID        string
+	client        *sdk.Pan115Client
+	ua            string
+	uploadTempDir string
 
 	listMu       sync.Mutex
 	lastListAt   time.Time
@@ -32,10 +33,11 @@ type Driver struct {
 }
 
 type Config struct {
-	ID     string
-	Cookie string // 形如 "UID=xxx; CID=xxx; SEID=xxx; KID=xxx"
-	RootID string // 默认 "0"
-	UA     string // 默认 UA115Browser
+	ID            string
+	Cookie        string // 形如 "UID=xxx; CID=xxx; SEID=xxx; KID=xxx"
+	RootID        string // 默认 "0"
+	UA            string // 默认 UA115Browser
+	UploadTempDir string
 }
 
 func New(c Config) *Driver {
@@ -48,11 +50,12 @@ func New(c Config) *Driver {
 		ua = sdk.UA115Browser
 	}
 	return &Driver{
-		id:           c.ID,
-		cookie:       c.Cookie,
-		rootID:       rootID,
-		ua:           ua,
-		listInterval: 2 * time.Second,
+		id:            c.ID,
+		cookie:        c.Cookie,
+		rootID:        rootID,
+		ua:            ua,
+		uploadTempDir: strings.TrimSpace(c.UploadTempDir),
+		listInterval:  2 * time.Second,
 	}
 }
 
@@ -347,7 +350,7 @@ func (d *Driver) UploadAndReportSha1(ctx context.Context, parentID, name string,
 		parentID = d.rootID
 	}
 
-	tmp, sha1Hex, written, err := bufferAndHashSha1(r, size)
+	tmp, sha1Hex, written, err := bufferAndHashSha1(d.uploadTempDir, r, size)
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -472,8 +475,14 @@ func (d *Driver) Remove(ctx context.Context, fileID string) error {
 // 返回临时文件（位置在末尾，需调用方 Seek 回 0）、SHA1 hex 大写、实际字节数。
 //
 // 调用方负责 Close + Remove 临时文件。
-func bufferAndHashSha1(r io.Reader, declaredSize int64) (*os.File, string, int64, error) {
-	tmp, err := os.CreateTemp("", "p115-upload-*.bin")
+func bufferAndHashSha1(tempDir string, r io.Reader, declaredSize int64) (*os.File, string, int64, error) {
+	tempDir = strings.TrimSpace(tempDir)
+	if tempDir != "" {
+		if err := os.MkdirAll(tempDir, 0o755); err != nil {
+			return nil, "", 0, fmt.Errorf("p115 upload: create tmp dir: %w", err)
+		}
+	}
+	tmp, err := os.CreateTemp(tempDir, "p115-upload-*.bin")
 	if err != nil {
 		return nil, "", 0, fmt.Errorf("p115 upload: create tmp: %w", err)
 	}

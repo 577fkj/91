@@ -70,6 +70,7 @@ type Driver struct {
 	httpClient *http.Client
 
 	onTokenUpdate func(access string)
+	uploadTempDir string
 
 	tokenMu sync.RWMutex
 
@@ -90,6 +91,7 @@ type Config struct {
 
 	MainAPIBaseURL  string
 	LoginAPIBaseURL string
+	UploadTempDir   string
 
 	OnTokenUpdate func(access string)
 }
@@ -123,6 +125,7 @@ func New(c Config) *Driver {
 		referer:       defaultReferer,
 		userAgent:     defaultUserAgent,
 		onTokenUpdate: c.OnTokenUpdate,
+		uploadTempDir: strings.TrimSpace(c.UploadTempDir),
 		client: resty.New().
 			SetTimeout(30*time.Second).
 			SetHeader("Accept", "application/json, text/plain, */*"),
@@ -289,7 +292,7 @@ func (d *Driver) UploadAndReportHash(ctx context.Context, parentID, name string,
 		parentID = d.rootID
 	}
 
-	tmp, md5Hex, actualSize, err := bufferAndHashMD5(r, size)
+	tmp, md5Hex, actualSize, err := bufferAndHashMD5(d.uploadTempDir, r, size)
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -1058,8 +1061,14 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
-func bufferAndHashMD5(r io.Reader, declaredSize int64) (*os.File, string, int64, error) {
-	tmp, err := os.CreateTemp("", "p123-upload-*.bin")
+func bufferAndHashMD5(tempDir string, r io.Reader, declaredSize int64) (*os.File, string, int64, error) {
+	tempDir = strings.TrimSpace(tempDir)
+	if tempDir != "" {
+		if err := os.MkdirAll(tempDir, 0o755); err != nil {
+			return nil, "", 0, fmt.Errorf("123pan upload: create tmp dir: %w", err)
+		}
+	}
+	tmp, err := os.CreateTemp(tempDir, "p123-upload-*.bin")
 	if err != nil {
 		return nil, "", 0, fmt.Errorf("123pan upload: create tmp: %w", err)
 	}

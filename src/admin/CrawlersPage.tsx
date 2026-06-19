@@ -57,6 +57,7 @@ export function CrawlersPage() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState("");
   const [runningId, setRunningId] = useState("");
+  const [uploadingId, setUploadingId] = useState("");
   const [stoppingId, setStoppingId] = useState("");
   const [togglingTeaserId, setTogglingTeaserId] = useState("");
   // undefined = 编辑器关闭；null = 新建；其余 = 编辑已有爬虫
@@ -123,6 +124,23 @@ export function CrawlersPage() {
       show(e instanceof Error ? e.message : "触发失败", "error");
     } finally {
       setRunningId("");
+    }
+  }
+
+  async function uploadVideos(crawler: api.AdminCrawler) {
+    setUploadingId(crawler.id);
+    try {
+      const resp = await api.uploadCrawlerVideos(crawler.id);
+      if (!resp.accepted) {
+        show(resp.message || "当前爬虫暂不满足上传条件", "info");
+        return;
+      }
+      show("已触发上传任务", "success");
+      await refresh(true);
+    } catch (e) {
+      show(e instanceof Error ? e.message : "触发上传失败", "error");
+    } finally {
+      setUploadingId("");
     }
   }
 
@@ -233,10 +251,12 @@ export function CrawlersPage() {
                   crawler={crawler}
                   expanded={expandedId === crawler.id}
                   running={runningId === crawler.id}
+                  uploading={uploadingId === crawler.id}
                   stopping={stoppingId === crawler.id}
                   togglingTeaser={togglingTeaserId === crawler.id}
                   onToggle={() => setExpandedId(expandedId === crawler.id ? "" : crawler.id)}
                   onRun={() => run(crawler)}
+                  onUpload={() => uploadVideos(crawler)}
                   onStop={() => stop(crawler)}
                   onToggleTeaser={() => toggleTeaser(crawler)}
                   onEdit={() => setEditorTarget(crawler)}
@@ -284,37 +304,16 @@ function CrawlerMetric({ label, value, icon, tone }: { label: string; value: num
   );
 }
 
-type StageInfo = {
-  key: string;
-  label: string;
-  status?: api.DriveGenerationStatus;
-};
-
-function crawlerStages(crawler: api.AdminCrawler): StageInfo[] {
-  return [
-    { key: "scan", label: "抓取", status: crawler.scanGenerationStatus },
-    { key: "thumbnail", label: "封面", status: crawler.thumbnailGenerationStatus },
-    { key: "preview", label: "预览", status: crawler.previewGenerationStatus },
-    { key: "fingerprint", label: "指纹", status: crawler.fingerprintGenerationStatus },
-    { key: "upload", label: "上传", status: crawler.uploadGenerationStatus },
-  ];
-}
-
-function stageStateLabel(stage: StageInfo): string {
-  const state = stage.status?.state || "idle";
-  if (stage.key === "scan" && state === "scanning") return "抓取中";
-  if (stage.key === "upload" && state === "uploading") return "上传中";
-  return generationStateLabel(state);
-}
-
 function CrawlerRow({
   crawler,
   expanded,
   running,
+  uploading,
   stopping,
   togglingTeaser,
   onToggle,
   onRun,
+  onUpload,
   onStop,
   onToggleTeaser,
   onEdit,
@@ -323,16 +322,19 @@ function CrawlerRow({
   crawler: api.AdminCrawler;
   expanded: boolean;
   running: boolean;
+  uploading: boolean;
   stopping: boolean;
   togglingTeaser: boolean;
   onToggle: () => void;
   onRun: () => void;
+  onUpload: () => void;
   onStop: () => void;
   onToggleTeaser: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const busy = crawlerBusy(crawler);
+  const uploadButtonTitle = uploading ? "上传请求处理中" : "上传本地爬虫视频到已配置的上传网盘";
   return (
     <div className={`admin-crawler-row ${expanded ? "is-expanded" : ""}`}>
       <div className="admin-crawler-row__line">
@@ -346,31 +348,11 @@ function CrawlerRow({
               上次抓取 {formatLastCrawl(crawler.lastCrawlAt)} · 每次新增 {crawler.targetNew || "10"} 条 · 累计爬取 {crawler.totalCrawledCount ?? 0} 条
             </span>
           </span>
-          <span className="admin-crawler-pipeline">
-            {crawlerStages(crawler).map((stage) => {
-              const state = stage.status?.state || "idle";
-              const active = BUSY_STATES.has(state) || state === "cooling";
-              return (
-                <span
-                  key={stage.key}
-                  className={`admin-crawler-stage is-${generationStateClass(state)}`}
-                  title={`${stage.label}：${stageStateLabel(stage)}`}
-                >
-                  <span className="admin-crawler-stage__dot" />
-                  {stage.label}
-                  {active && <em>{stageStateLabel(stage)}</em>}
-                </span>
-              );
-            })}
-          </span>
-          <span className={`admin-status is-${crawler.status === "ok" ? "ok" : crawler.status === "error" ? "error" : "pending"}`}>
-            {crawlerStatusLabel(crawler)}
-          </span>
           <ChevronDown size={16} className="admin-crawler-row__chevron" />
         </button>
         <div className="admin-crawler-row__actions">
           <button
-            className={`admin-btn admin-crawler-preview-card-toggle ${crawler.teaserEnabled ? "is-on" : ""}`}
+            className="admin-btn admin-crawler-preview-card-toggle"
             type="button"
             onClick={onToggleTeaser}
             disabled={togglingTeaser}
@@ -389,6 +371,14 @@ function CrawlerRow({
               <Download size={13} /> {running ? "触发中..." : "立即抓取"}
             </button>
           )}
+          <button
+            className="admin-btn"
+            type="button"
+            onClick={onUpload}
+            title={uploadButtonTitle}
+          >
+            <Upload size={13} /> {uploading ? "上传中..." : "上传视频"}
+          </button>
           <button className="admin-btn" type="button" onClick={onEdit}>
             <Pencil size={13} /> 编辑
           </button>
@@ -1073,12 +1063,6 @@ function CrawlerTestField({ label, value }: { label: string; value?: string | nu
 
 function crawlerTestFailure(result: api.CrawlerDryRunResult) {
   return result.error || result.mediaCheck?.error || "";
-}
-
-function crawlerStatusLabel(crawler: api.AdminCrawler) {
-  if (crawler.status === "ok") return "已就绪";
-  if (crawler.status === "error") return "错误";
-  return "未连接";
 }
 
 function formatLastCrawl(ts?: number) {

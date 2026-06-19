@@ -578,6 +578,128 @@ func TestScheduleCrawlerUploadMigrationSkipsWithoutUploadTarget(t *testing.T) {
 	}
 }
 
+func TestScheduleManualCrawlerUploadMigrationRunsWhenAssetsReady(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	if err := cat.UpsertDrive(ctx, &catalog.Drive{
+		ID:            "crawler-ready",
+		Kind:          scriptcrawler.Kind,
+		Name:          "Ready Crawler",
+		RootID:        "/",
+		TeaserEnabled: true,
+		Credentials: map[string]string{
+			"script_path":     "/tmp/ready.py",
+			"upload_drive_id": "pikpak-target",
+		},
+	}); err != nil {
+		t.Fatalf("seed crawler: %v", err)
+	}
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:                scriptcrawler.BuildVideoID("crawler-ready", "source-1"),
+		DriveID:           "crawler-ready",
+		FileID:            "source-1.mp4",
+		FileName:          "source-1.mp4",
+		Title:             "Source 1",
+		Size:              123,
+		Ext:               "mp4",
+		SampledSHA256:     "sampled-source-1",
+		FingerprintStatus: "ready",
+		PreviewStatus:     "ready",
+		PublishedAt:       time.Now(),
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	registry := proxy.NewRegistry()
+	registry.Set("crawler-ready", &serverFakeKindDrive{id: "crawler-ready", kind: scriptcrawler.Kind})
+	registry.Set("pikpak-target", &serverFakeKindDrive{id: "pikpak-target", kind: "pikpak"})
+	migrator := &serverFakeSpider91MigrationRunner{}
+	app := &App{
+		cat:                cat,
+		registry:           registry,
+		spider91Migrator:   migrator,
+		workers:            map[string]*preview.Worker{},
+		thumbWorkers:       map[string]*preview.ThumbWorker{},
+		fingerprintWorkers: map[string]*fingerprint.Worker{},
+	}
+
+	accepted, message := app.scheduleManualCrawlerUploadMigration(ctx, "crawler-ready")
+	if !accepted {
+		t.Fatalf("accepted = false, message = %q", message)
+	}
+	deadline := time.After(time.Second)
+	for migrator.called == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("migration calls = %d, want 1", migrator.called)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func TestScheduleManualCrawlerUploadMigrationRejectsPendingFingerprint(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	if err := cat.UpsertDrive(ctx, &catalog.Drive{
+		ID:            "crawler-pending",
+		Kind:          scriptcrawler.Kind,
+		Name:          "Pending Crawler",
+		RootID:        "/",
+		TeaserEnabled: true,
+		Credentials: map[string]string{
+			"script_path":     "/tmp/pending.py",
+			"upload_drive_id": "pikpak-target",
+		},
+	}); err != nil {
+		t.Fatalf("seed crawler: %v", err)
+	}
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:            scriptcrawler.BuildVideoID("crawler-pending", "source-1"),
+		DriveID:       "crawler-pending",
+		FileID:        "source-1.mp4",
+		FileName:      "source-1.mp4",
+		Title:         "Source 1",
+		Size:          123,
+		Ext:           "mp4",
+		PreviewStatus: "ready",
+		PublishedAt:   time.Now(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	migrator := &serverFakeSpider91MigrationRunner{}
+	app := &App{cat: cat, registry: proxy.NewRegistry(), spider91Migrator: migrator}
+
+	accepted, message := app.scheduleManualCrawlerUploadMigration(ctx, "crawler-pending")
+	if accepted {
+		t.Fatal("accepted = true, want false")
+	}
+	if !strings.Contains(message, "指纹") {
+		t.Fatalf("message = %q, want fingerprint reason", message)
+	}
+	if migrator.called != 0 {
+		t.Fatalf("migration calls = %d, want 0", migrator.called)
+	}
+}
+
 func TestDriveGenerationStatusUsesWorkerQueueNotPendingCatalogRows(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")

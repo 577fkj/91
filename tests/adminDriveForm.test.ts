@@ -251,6 +251,7 @@ test("crawler management is a separate admin section", () => {
   assert.match(crawlerPageSource, /api\.listDrives/);
   assert.match(crawlerPageSource, /api\.upsertCrawler/);
   assert.match(crawlerPageSource, /api\.runCrawler/);
+  assert.match(crawlerPageSource, /api\.uploadCrawlerVideos/);
   assert.match(crawlerPageSource, /api\.stopCrawlerTasks/);
   assert.match(crawlerPageSource, /api\.deleteCrawler/);
   assert.match(crawlerPageSource, /api\.importCrawlerScriptFile/);
@@ -266,7 +267,15 @@ test("crawler management is a separate admin section", () => {
   assert.match(crawlerPageSource, /admin-crawler-preview-card-toggle/);
   assert.match(crawlerPageSource, /预览：开/);
   assert.match(crawlerPageSource, /预览：关/);
+  assert.match(crawlerPageSource, /上传视频/);
   assert.match(crawlerPageSource, /aria-pressed=\{crawler\.teaserEnabled\}/);
+  assert.doesNotMatch(crawlerPageSource, /crawlerUploadBlockedReason/);
+  assert.doesNotMatch(crawlerPageSource, /disabled=\{uploading/);
+  assert.doesNotMatch(crawlerPageSource, /crawlerStatusLabel/);
+  assert.doesNotMatch(crawlerPageSource, /admin-crawler-preview-card-toggle \$\{crawler\.teaserEnabled/);
+  assert.doesNotMatch(adminCss, /admin-crawler-preview-card-toggle\.is-on/);
+  assert.doesNotMatch(crawlerPageSource, /admin-crawler-pipeline/);
+  assert.doesNotMatch(adminCss, /admin-crawler-(pipeline|stage)/);
   assert.doesNotMatch(crawlerPageSource, /teaserEnabled: form\.teaserEnabled/);
   assert.doesNotMatch(crawlerPageSource, /aria-pressed=\{form\.teaserEnabled\}/);
   assert.match(crawlerPageSource, /UPLOAD_TARGET_KINDS/);
@@ -287,6 +296,7 @@ test("crawler management is a separate admin section", () => {
   assert.match(apiSource, /teaserEnabled: boolean/);
   assert.doesNotMatch(apiSource, /teaserEnabled\?: boolean/);
   assert.match(apiSource, /"\/crawlers"/);
+  assert.match(apiSource, /\/crawlers\/\$\{encodeURIComponent\(id\)\}\/upload/);
   assert.match(apiSource, /"\/crawlers\/import-file"/);
   assert.match(apiSource, /"\/crawlers\/import-url"/);
   assert.match(apiSource, /"\/crawlers\/test-script"/);

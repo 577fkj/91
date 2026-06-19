@@ -317,6 +317,13 @@ export function runCrawler(id: string) {
   );
 }
 
+export function uploadCrawlerVideos(id: string) {
+  return request<{ ok: boolean; accepted: boolean; message?: string; status?: NightlyJobStatus }>(
+    `/crawlers/${encodeURIComponent(id)}/upload`,
+    { method: "POST" }
+  );
+}
+
 export function stopCrawlerTasks(id: string) {
   return request<{ ok: boolean; stopped: boolean }>(
     `/crawlers/${encodeURIComponent(id)}/tasks/stop`,
