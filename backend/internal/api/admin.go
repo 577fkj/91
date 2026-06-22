@@ -24,7 +24,6 @@ import (
 	"github.com/video-site/backend/internal/drives/guangyapan"
 	"github.com/video-site/backend/internal/drives/p123"
 	"github.com/video-site/backend/internal/drives/scriptcrawler"
-	"github.com/video-site/backend/internal/drives/spider91"
 	"github.com/video-site/backend/internal/drives/wopan"
 )
 
@@ -77,11 +76,8 @@ type AdminServer struct {
 	// Theme 读写（"dark" | "pink" | "sky"）
 	GetTheme func() string
 	SetTheme func(theme string) error
-	// Spider91 → 115/123/PikPak/OneDrive/Google Drive/联通网盘/光鸭网盘 上传目标 drive ID 读写
-	GetSpider91UploadDriveID func() string
-	SetSpider91UploadDriveID func(driveID string) error
-	// OnRunNightlyJob 触发一次完整的凌晨流水线（Phase1 扫盘 + Phase2 91 爬虫 +
-	// Phase3 迁移）。立即返回 —— 实际任务在后台跑，admin 在日志或下次状态查询里
+	// OnRunNightlyJob 触发一次完整的凌晨流水线（Phase1 扫盘 + Phase2 爬虫 +
+	// Phase3 上传）。立即返回 —— 实际任务在后台跑，admin 在日志或下次状态查询里
 	// 看进度。若流水线正在跑或已排队，Runner 会拒绝重复触发。
 	OnRunNightlyJob func() bool
 	// GetNightlyJobStatus 返回凌晨流水线当前状态，用于前端禁用重复触发按钮。
@@ -478,13 +474,10 @@ func (a *AdminServer) handleListDrives(w http.ResponseWriter, r *http.Request) {
 		// SkipDirIDs 是用户在 admin 配置的"扫描跳过目录"集合（drive 侧目录 fileID）。
 		// 前端用它在"设置跳过目录"弹窗里回显已选项；JSON 字段名 camelCase 与
 		// catalog.Drive 保持一致。
-		SkipDirIDs []string `json:"skipDirIds"`
-		// LastCrawlAt 是 spider91 上次成功爬取的 unix 秒（来自 credentials.last_crawl_at）。
-		// 其它 kind 留 0；前端用它显示"上次抓取: N 小时前"。
-		Spider91Proxy             string `json:"spider91Proxy,omitempty"`
-		LastCrawlAt               int64  `json:"lastCrawlAt,omitempty"`
-		GoogleDriveUseOnlineAPI   *bool  `json:"googleDriveUseOnlineAPI,omitempty"`
-		GoogleDriveOpenListAPIURL string `json:"googleDriveOpenListApiUrl,omitempty"`
+		SkipDirIDs                []string `json:"skipDirIds"`
+		LastCrawlAt               int64    `json:"lastCrawlAt,omitempty"`
+		GoogleDriveUseOnlineAPI   *bool    `json:"googleDriveUseOnlineAPI,omitempty"`
+		GoogleDriveOpenListAPIURL string   `json:"googleDriveOpenListApiUrl,omitempty"`
 		// STRMAllowOutsideRoot 是 localstorage 的 .strm 越root开关；其它 kind 省略。
 		STRMAllowOutsideRoot          *bool            `json:"strmAllowOutsideRoot,omitempty"`
 		ScanGenerationStatus          GenerationStatus `json:"scanGenerationStatus"`
@@ -532,7 +525,6 @@ func (a *AdminServer) handleListDrives(w http.ResponseWriter, r *http.Request) {
 		if generation.Transcode.State == "" {
 			generation.Transcode.State = "idle"
 		}
-		// spider91 没有用户凭证概念；只要存在 drive 行就视为"已配置"。
 		// last_crawl_at 是后端自动写入的运行状态字段，不计入 hasCredential 判定。
 		hasCred := false
 		userCredKeys := 0
@@ -542,7 +534,7 @@ func (a *AdminServer) handleListDrives(w http.ResponseWriter, r *http.Request) {
 			}
 			userCredKeys++
 		}
-		hasCred = userCredKeys > 0 || d.Kind == "spider91"
+		hasCred = userCredKeys > 0
 
 		var lastCrawlAt int64
 		if d.Credentials != nil {
@@ -560,7 +552,6 @@ func (a *AdminServer) handleListDrives(w http.ResponseWriter, r *http.Request) {
 			HasCredential:                 hasCred,
 			TeaserEnabled:                 d.TeaserEnabled,
 			SkipDirIDs:                    append([]string{}, d.SkipDirIDs...),
-			Spider91Proxy:                 spider91ProxyForDrive(d),
 			LastCrawlAt:                   lastCrawlAt,
 			GoogleDriveUseOnlineAPI:       googleDriveUseOnlineAPIForDrive(d),
 			GoogleDriveOpenListAPIURL:     googleDriveOpenListAPIURLForDrive(d),
@@ -622,10 +613,11 @@ func (a *AdminServer) handleUpsertDrive(w http.ResponseWriter, r *http.Request) 
 	if existingDrive, err := a.Catalog.GetDrive(r.Context(), body.ID); err == nil {
 		existing = existingDrive
 	}
-	if body.Kind == "spider91" {
-		http.Error(w, "91Spider 已不再支持通过网盘添加，请在爬虫管理页面添加爬虫脚本", http.StatusBadRequest)
+	if !isSupportedDriveKind(body.Kind) {
+		http.Error(w, "unsupported drive kind", http.StatusBadRequest)
 		return
-	} else if body.Kind == scriptcrawler.Kind {
+	}
+	if body.Kind == scriptcrawler.Kind {
 		credentials, err := mergeScriptCrawlerCredentials(existing, body.Credentials)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -816,7 +808,6 @@ func crawlerVideoIDPrefixes(d *catalog.Drive) []string {
 	}
 	return []string{
 		scriptcrawler.Kind + "-" + d.ID + "-",
-		spider91.Kind + "-" + d.ID + "-",
 	}
 }
 
@@ -1439,6 +1430,15 @@ func isCrawlerDriveKind(kind string) bool {
 	return kind == scriptcrawler.Kind
 }
 
+func isSupportedDriveKind(kind string) bool {
+	switch kind {
+	case "quark", "p115", "p123", "pikpak", "wopan", "guangyapan", "onedrive", "googledrive", "localstorage", scriptcrawler.Kind:
+		return true
+	default:
+		return false
+	}
+}
+
 func isConfiguredCrawlerDrive(d *catalog.Drive) bool {
 	return d != nil &&
 		isCrawlerDriveKind(d.Kind) &&
@@ -1472,13 +1472,6 @@ func (a *AdminServer) removeImportedCrawlerScript(d *catalog.Drive) (bool, error
 		return false, err
 	}
 	return true, nil
-}
-
-func spider91ProxyForDrive(d *catalog.Drive) string {
-	if d == nil || d.Kind != "spider91" || d.Credentials == nil {
-		return ""
-	}
-	return strings.TrimSpace(d.Credentials["proxy"])
 }
 
 // strmAllowOutsideRootForDrive 返回 localstorage 的 .strm 越root开关；
@@ -1555,34 +1548,6 @@ func mergeNonEmptyCredentials(existing *catalog.Drive, incoming map[string]strin
 	return merged
 }
 
-func mergeSpider91Credentials(existing *catalog.Drive, incoming map[string]string) (map[string]string, error) {
-	merged := map[string]string{}
-	if existing != nil {
-		for k, v := range existing.Credentials {
-			merged[k] = v
-		}
-	}
-	for k, v := range incoming {
-		if strings.TrimSpace(k) == "" {
-			continue
-		}
-		if k == "proxy" {
-			proxy, err := normalizeSpider91ProxyURL(v)
-			if err != nil {
-				return nil, err
-			}
-			if proxy == "" {
-				delete(merged, "proxy")
-			} else {
-				merged["proxy"] = proxy
-			}
-			continue
-		}
-		merged[k] = v
-	}
-	return merged, nil
-}
-
 func mergeScriptCrawlerCredentials(existing *catalog.Drive, incoming map[string]string) (map[string]string, error) {
 	merged := map[string]string{}
 	if existing != nil {
@@ -1642,10 +1607,6 @@ func mergeScriptCrawlerCredentials(existing *catalog.Drive, incoming map[string]
 	delete(merged, "python_path")
 	delete(merged, "config_json")
 	return merged, nil
-}
-
-func normalizeSpider91ProxyURL(raw string) (string, error) {
-	return normalizeCrawlerProxyURL(raw, "91Spider")
 }
 
 func normalizeCrawlerProxyURL(raw, label string) (string, error) {
@@ -2331,10 +2292,9 @@ func (a *AdminServer) handleRegenFailedFingerprints(w http.ResponseWriter, r *ht
 //
 // 注意：早期的全局 previewEnabled 字段已经下沉为每盘 teaser_enabled，
 // 不再出现在这里；前端要切换某个盘的预览视频生成请用 POST /admin/api/drives 上传
-// teaserEnabled 字段。保留 settings 用作主题、spider91 上传目标这类全局配置。
+// teaserEnabled 字段。settings 目前只保留全站主题。
 type settingsDTO struct {
-	Theme                 string `json:"theme"`
-	Spider91UploadDriveID string `json:"spider91UploadDriveId"`
+	Theme string `json:"theme"`
 }
 
 func (a *AdminServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -2344,19 +2304,12 @@ func (a *AdminServer) handleGetSettings(w http.ResponseWriter, r *http.Request) 
 			theme = v
 		}
 	}
-	spider91UploadID := ""
-	if a.GetSpider91UploadDriveID != nil {
-		spider91UploadID = a.GetSpider91UploadDriveID()
-	}
 	writeJSON(w, http.StatusOK, settingsDTO{
-		Theme:                 theme,
-		Spider91UploadDriveID: spider91UploadID,
+		Theme: theme,
 	})
 }
 
 func (a *AdminServer) handlePutSettings(w http.ResponseWriter, r *http.Request) {
-	// 用 map 区分"没传"和"传了空字符串"两种语义；空 spider91 上传 ID 表示
-	// 本地保存不上传。
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -2377,25 +2330,10 @@ func (a *AdminServer) handlePutSettings(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if v, ok := raw["spider91UploadDriveId"]; ok && a.SetSpider91UploadDriveID != nil {
-		var driveID string
-		if err := json.Unmarshal(v, &driveID); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := a.SetSpider91UploadDriveID(driveID); err != nil {
-			writeErr(w, http.StatusBadRequest, err)
-			return
-		}
-	}
-
 	// 回显当前值
 	resp := settingsDTO{}
 	if a.GetTheme != nil {
 		resp.Theme = a.GetTheme()
-	}
-	if a.GetSpider91UploadDriveID != nil {
-		resp.Spider91UploadDriveID = a.GetSpider91UploadDriveID()
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

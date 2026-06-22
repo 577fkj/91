@@ -105,8 +105,12 @@ CREATE TABLE IF NOT EXISTS deleted_videos (
 	content_hash TEXT NOT NULL DEFAULT '',
 	file_name    TEXT NOT NULL DEFAULT '',
 	size_bytes   INTEGER NOT NULL DEFAULT 0,
+	reason       TEXT NOT NULL DEFAULT '',
 	deleted_at   INTEGER NOT NULL
 )`); err != nil {
+		return err
+	}
+	if err := c.addColumnIfMissing(ctx, "deleted_videos", "reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := c.syncDriveScanRootIDToRootID(ctx); err != nil {
@@ -187,7 +191,7 @@ CREATE TABLE IF NOT EXISTS deleted_videos (
 	if err := c.clearRemoteP123ThumbnailsOnce(ctx); err != nil {
 		return err
 	}
-	if err := c.clearRemoteNonSpider91Thumbnails(ctx); err != nil {
+	if err := c.clearRemoteThumbnails(ctx); err != nil {
 		return err
 	}
 	if err := c.hideZeroSizeVideosFromKnownDrives(ctx); err != nil {
@@ -387,10 +391,9 @@ func (c *Catalog) clearRemoteP123ThumbnailsOnce(ctx context.Context) error {
 	return nil
 }
 
-func (c *Catalog) clearRemoteNonSpider91Thumbnails(ctx context.Context) error {
-	// 非 91Spider 视频不再使用网盘侧返回的远程缩略图。清空历史 http/https
-	// thumbnail_url 后，封面 worker 会重新从视频中间帧生成本地 /p/thumb/<id>。
-	// 91Spider 的封面是爬虫下载后保存到本地 /p/thumb/<id>，不受这条规则影响。
+func (c *Catalog) clearRemoteThumbnails(ctx context.Context) error {
+	// 不再使用网盘侧返回的远程缩略图。清空历史 http/https thumbnail_url 后，
+	// 封面 worker 会重新从视频中间帧生成本地 /p/thumb/<id>。
 	res, err := c.db.ExecContext(ctx, `
 UPDATE videos
    SET thumbnail_url = '',
@@ -401,18 +404,12 @@ UPDATE videos
        lower(COALESCE(thumbnail_url, '')) LIKE 'http://%'
        OR lower(COALESCE(thumbnail_url, '')) LIKE 'https://%'
    )
-   AND NOT EXISTS (
-       SELECT 1
-         FROM drives
-        WHERE drives.id = videos.drive_id
-          AND drives.kind = 'spider91'
-   )
 `, time.Now().UnixMilli())
 	if err != nil {
 		return err
 	}
 	if affected, err := res.RowsAffected(); err == nil && affected > 0 {
-		log.Printf("[catalog] cleared %d remote non-91Spider thumbnail(s) for local regeneration", affected)
+		log.Printf("[catalog] cleared %d remote thumbnail(s) for local regeneration", affected)
 	}
 	return nil
 }

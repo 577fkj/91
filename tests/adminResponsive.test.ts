@@ -124,6 +124,15 @@ test("blacklist restore action uses a light button style", () => {
   assert.doesNotMatch(restoreButton, /background\s*:\s*var\(--accent\)/);
 });
 
+test("blacklist duplicate reason renders as a compact pill", () => {
+  const pill = ruleBody(adminCss, ".admin-blacklist-reason-pill");
+
+  assert.match(videosPageSource, /admin-blacklist-reason-pill/);
+  assert.match(videosPageSource, /重复文件/);
+  assert.match(pill, /border-radius\s*:\s*999px/);
+  assert.match(pill, /white-space\s*:\s*nowrap/);
+});
+
 test("admin video management controls wrap instead of covering text on mobile", () => {
   const css = mobileCss();
   const paginationInfo = allRuleBodies(css, ".admin-table-pagination__info");

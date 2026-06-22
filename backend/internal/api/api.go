@@ -25,7 +25,6 @@ import (
 	"github.com/video-site/backend/internal/catalog"
 	"github.com/video-site/backend/internal/drives/localstorage"
 	"github.com/video-site/backend/internal/drives/localupload"
-	"github.com/video-site/backend/internal/drives/spider91"
 	"github.com/video-site/backend/internal/mediaasset"
 	"github.com/video-site/backend/internal/proxy"
 )
@@ -153,7 +152,6 @@ func (s *Server) RegisterRoutes(r chi.Router, a *auth.Authenticator) {
 		// 代理路由同样需要鉴权，防止绕过
 		r.Get("/p/stream/{driveID}/*", s.handleStream)
 		r.Get("/p/upload/{videoID}", s.handleUploadedVideo)
-		r.Get("/p/spider91/{videoID}", s.handleSpider91Video)
 		r.Get("/p/preview/{videoID}", s.handlePreview)
 		r.Get("/p/thumb/{videoID}", s.handleThumb)
 	})
@@ -833,44 +831,6 @@ func (s *Server) handleUploadedVideo(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// handleSpider91Video 服务 spider91 drive 下载到本地的视频文件。
-// 路径形如 /p/spider91/<videoID>，videoID = "spider91-<driveID>-<sourceID>"。
-// 通过 catalog 拿到 file_id（"<sourceID>.mp4"），再让 driver 解析到绝对路径并 ServeFile。
-func (s *Server) handleSpider91Video(w http.ResponseWriter, r *http.Request) {
-	videoID := routeParam(r, "videoID")
-	v, err := s.Catalog.GetVideo(r.Context(), videoID)
-	if err != nil || v.Hidden {
-		http.NotFound(w, r)
-		return
-	}
-	if s.Proxy == nil || s.Proxy.Registry == nil {
-		http.NotFound(w, r)
-		return
-	}
-	d, ok := s.Proxy.Registry.Get(v.DriveID)
-	if !ok || d.Kind() != spider91.Kind {
-		http.NotFound(w, r)
-		return
-	}
-	sd, ok := d.(*spider91.Driver)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	path, err := sd.VideoPath(v.FileID)
-	if err != nil {
-		http.Error(w, "invalid video id", http.StatusForbidden)
-		return
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() || info.Size() == 0 {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "private, max-age=300")
-	http.ServeFile(w, r, path)
-}
-
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	videoID := routeParam(r, "videoID")
 	v, err := s.Catalog.GetVideo(r.Context(), videoID)
@@ -988,14 +948,6 @@ func (s *Server) videoSource(v *catalog.Video) string {
 	if v.DriveID == localUploadDriveID {
 		return "/p/upload/" + pathSegment(v.ID)
 	}
-	if s.Proxy != nil && s.Proxy.Registry != nil {
-		if d, ok := s.Proxy.Registry.Get(v.DriveID); ok {
-			switch d.Kind() {
-			case spider91.Kind:
-				return "/p/spider91/" + pathSegment(v.ID)
-			}
-		}
-	}
 	if src, ok := transcodedSource(v); ok {
 		return src
 	}
@@ -1076,8 +1028,6 @@ func driveKindLabel(kind string) string {
 		return "Google Drive"
 	case localstorage.Kind:
 		return "本地存储"
-	case spider91.Kind:
-		return "91 爬虫"
 	default:
 		return kind
 	}

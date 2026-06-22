@@ -81,7 +81,13 @@ func TestBlacklistListAndRemove(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("seed %s: %v", s.id, err)
 		}
-		if err := cat.DeleteVideoWithTombstone(ctx, s.id); err != nil {
+		var err error
+		if s.id == "d2" {
+			err = cat.DeleteVideoWithTombstoneReason(ctx, s.id, DeletedVideoReasonDuplicate)
+		} else {
+			err = cat.DeleteVideoWithTombstone(ctx, s.id)
+		}
+		if err != nil {
 			t.Fatalf("tombstone %s: %v", s.id, err)
 		}
 	}
@@ -92,6 +98,16 @@ func TestBlacklistListAndRemove(t *testing.T) {
 	}
 	if total != 3 || len(items) != 3 {
 		t.Fatalf("deleted total/len = %d/%d, want 3/3", total, len(items))
+	}
+	reasons := map[string]string{}
+	for _, item := range items {
+		reasons[item.ID] = item.Reason
+	}
+	if reasons["d1"] != "" || reasons["d3"] != "" {
+		t.Fatalf("manual tombstone reasons = %#v, want empty", reasons)
+	}
+	if reasons["d2"] != DeletedVideoReasonDuplicate {
+		t.Fatalf("duplicate tombstone reason = %q, want %q", reasons["d2"], DeletedVideoReasonDuplicate)
 	}
 
 	// 关键字过滤

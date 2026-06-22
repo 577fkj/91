@@ -343,13 +343,13 @@ func TestEnsureTagForVideoIDPrefixBackfillsSourceTag(t *testing.T) {
 		id     string
 		manual bool
 	}{
-		{id: "spider91-91-spider-1200001"},
-		{id: "spider91-91-spider-1200002", manual: true},
-		{id: "spider91-other-1200003"},
+		{id: "scriptcrawler-crawler-a-source001"},
+		{id: "scriptcrawler-crawler-a-source002", manual: true},
+		{id: "scriptcrawler-other-source003"},
 	} {
 		if err := cat.UpsertVideo(ctx, &Video{
 			ID:          seed.id,
-			DriveID:     "91-spider",
+			DriveID:     "crawler-a",
 			FileID:      seed.id + ".mp4",
 			Title:       "legacy title without source text",
 			PublishedAt: now,
@@ -365,28 +365,28 @@ func TestEnsureTagForVideoIDPrefixBackfillsSourceTag(t *testing.T) {
 		}
 	}
 
-	added, err := cat.EnsureTagForVideoIDPrefix(ctx, "spider91-91-spider-", "91porn", nil, "system")
+	added, err := cat.EnsureTagForVideoIDPrefix(ctx, "scriptcrawler-crawler-a-", "crawler-tag", nil, "system")
 	if err != nil {
 		t.Fatalf("ensure prefix tag: %v", err)
 	}
 	if added != 1 {
 		t.Fatalf("added = %d, want 1", added)
 	}
-	got, err := cat.GetVideo(ctx, "spider91-91-spider-1200001")
+	got, err := cat.GetVideo(ctx, "scriptcrawler-crawler-a-source001")
 	if err != nil {
 		t.Fatalf("get tagged video: %v", err)
 	}
-	if !sameStrings(got.Tags, []string{"91porn"}) {
-		t.Fatalf("tagged video tags = %#v, want 91porn", got.Tags)
+	if !sameStrings(got.Tags, []string{"crawler-tag"}) {
+		t.Fatalf("tagged video tags = %#v, want crawler-tag", got.Tags)
 	}
-	manual, err := cat.GetVideo(ctx, "spider91-91-spider-1200002")
+	manual, err := cat.GetVideo(ctx, "scriptcrawler-crawler-a-source002")
 	if err != nil {
 		t.Fatalf("get manual video: %v", err)
 	}
 	if len(manual.Tags) != 0 {
 		t.Fatalf("manual video tags = %#v, want unchanged", manual.Tags)
 	}
-	other, err := cat.GetVideo(ctx, "spider91-other-1200003")
+	other, err := cat.GetVideo(ctx, "scriptcrawler-other-source003")
 	if err != nil {
 		t.Fatalf("get other prefix video: %v", err)
 	}
@@ -804,7 +804,7 @@ func TestMigrateCollapsesAVCodeTagsIntoAV(t *testing.T) {
 	}
 }
 
-func TestMigrateClearsRemoteNonSpiderThumbnailURLs(t *testing.T) {
+func TestMigrateClearsRemoteThumbnailURLs(t *testing.T) {
 	ctx := context.Background()
 	cat, err := Open(t.TempDir() + "/catalog.db")
 	if err != nil {
@@ -848,14 +848,14 @@ func TestMigrateClearsRemoteNonSpiderThumbnailURLs(t *testing.T) {
 		t.Fatalf("seed pikpak: %v", err)
 	}
 	if err := cat.UpsertDrive(ctx, &Drive{
-		ID:        "spider91-main",
-		Kind:      "spider91",
-		Name:      "91Spider",
-		RootID:    "root",
+		ID:        "crawler-main",
+		Kind:      "scriptcrawler",
+		Name:      "Crawler",
+		RootID:    "/",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("seed spider91: %v", err)
+		t.Fatalf("seed crawler: %v", err)
 	}
 
 	videos := []*Video{
@@ -895,11 +895,18 @@ func TestMigrateClearsRemoteNonSpiderThumbnailURLs(t *testing.T) {
 			ThumbnailURL: "/p/thumb/p123-local-thumb-video",
 		},
 		{
-			ID:           "spider91-local-thumb-video",
-			DriveID:      "spider91-main",
+			ID:           "scriptcrawler-crawler-main-local-thumb",
+			DriveID:      "crawler-main",
 			FileID:       "file-6",
-			Title:        "91Spider local thumb",
-			ThumbnailURL: "/p/thumb/spider91-local-thumb-video",
+			Title:        "Crawler local thumb",
+			ThumbnailURL: "/p/thumb/scriptcrawler-crawler-main-local-thumb",
+		},
+		{
+			ID:           "scriptcrawler-crawler-main-remote-thumb",
+			DriveID:      "crawler-main",
+			FileID:       "file-7",
+			Title:        "Crawler remote thumb",
+			ThumbnailURL: "https://example.invalid/crawler-thumb.jpg",
 		},
 	}
 	for _, v := range videos {
@@ -962,12 +969,20 @@ func TestMigrateClearsRemoteNonSpiderThumbnailURLs(t *testing.T) {
 		t.Fatalf("p123 local thumbnail = %q, want preserved", p123Local.ThumbnailURL)
 	}
 
-	spider91Local, err := cat.GetVideo(ctx, "spider91-local-thumb-video")
+	crawlerLocal, err := cat.GetVideo(ctx, "scriptcrawler-crawler-main-local-thumb")
 	if err != nil {
-		t.Fatalf("get spider91 local thumb video: %v", err)
+		t.Fatalf("get crawler local thumb video: %v", err)
 	}
-	if spider91Local.ThumbnailURL != "/p/thumb/spider91-local-thumb-video" {
-		t.Fatalf("spider91 local thumbnail = %q, want preserved", spider91Local.ThumbnailURL)
+	if crawlerLocal.ThumbnailURL != "/p/thumb/scriptcrawler-crawler-main-local-thumb" {
+		t.Fatalf("crawler local thumbnail = %q, want preserved", crawlerLocal.ThumbnailURL)
+	}
+
+	crawlerRemote, err := cat.GetVideo(ctx, "scriptcrawler-crawler-main-remote-thumb")
+	if err != nil {
+		t.Fatalf("get crawler remote thumb video: %v", err)
+	}
+	if crawlerRemote.ThumbnailURL != "" {
+		t.Fatalf("crawler remote thumbnail = %q, want cleared", crawlerRemote.ThumbnailURL)
 	}
 }
 
@@ -1113,33 +1128,33 @@ func TestTagFilterMatchesCanonicalDuplicateVideo(t *testing.T) {
 			UpdatedAt:   now,
 		},
 		{
-			ID:          "spider91-dup-1",
-			DriveID:     "91-spider",
+			ID:          "scriptcrawler-crawler-a-dup-1",
+			DriveID:     "crawler-a",
 			FileID:      "dup-1.mp4",
-			Title:       "Spider duplicate 1",
-			Tags:        []string{"91porn"},
+			Title:       "Crawler duplicate 1",
+			Tags:        []string{"crawler-tag"},
 			Size:        1024,
 			PublishedAt: now.Add(time.Second),
 			CreatedAt:   now.Add(time.Second),
 			UpdatedAt:   now.Add(time.Second),
 		},
 		{
-			ID:          "spider91-dup-2",
-			DriveID:     "91-spider",
+			ID:          "scriptcrawler-crawler-a-dup-2",
+			DriveID:     "crawler-a",
 			FileID:      "dup-2.mp4",
-			Title:       "Spider duplicate 2",
-			Tags:        []string{"91porn"},
+			Title:       "Crawler duplicate 2",
+			Tags:        []string{"crawler-tag"},
 			Size:        1024,
 			PublishedAt: now.Add(2 * time.Second),
 			CreatedAt:   now.Add(2 * time.Second),
 			UpdatedAt:   now.Add(2 * time.Second),
 		},
 		{
-			ID:          "spider91-visible",
-			DriveID:     "91-spider",
+			ID:          "scriptcrawler-crawler-a-visible",
+			DriveID:     "crawler-a",
 			FileID:      "visible.mp4",
-			Title:       "Spider visible",
-			Tags:        []string{"91porn"},
+			Title:       "Crawler visible",
+			Tags:        []string{"crawler-tag"},
 			Size:        2048,
 			PublishedAt: now.Add(3 * time.Second),
 			CreatedAt:   now.Add(3 * time.Second),
@@ -1150,16 +1165,16 @@ func TestTagFilterMatchesCanonicalDuplicateVideo(t *testing.T) {
 			t.Fatalf("seed %s: %v", v.ID, err)
 		}
 	}
-	for _, id := range []string{"pikpak-canonical", "spider91-dup-1", "spider91-dup-2"} {
+	for _, id := range []string{"pikpak-canonical", "scriptcrawler-crawler-a-dup-1", "scriptcrawler-crawler-a-dup-2"} {
 		if err := cat.UpdateVideoFingerprint(ctx, id, "same-sampled-sha256", "ready", ""); err != nil {
 			t.Fatalf("fingerprint %s: %v", id, err)
 		}
 	}
-	if err := cat.UpdateVideoFingerprint(ctx, "spider91-visible", "unique-sampled-sha256", "ready", ""); err != nil {
+	if err := cat.UpdateVideoFingerprint(ctx, "scriptcrawler-crawler-a-visible", "unique-sampled-sha256", "ready", ""); err != nil {
 		t.Fatalf("fingerprint visible: %v", err)
 	}
 
-	items, total, err := cat.ListVideos(ctx, ListParams{Tag: "91porn", Page: 1, PageSize: 10})
+	items, total, err := cat.ListVideos(ctx, ListParams{Tag: "crawler-tag", Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("list videos by tag: %v", err)
 	}
@@ -1170,13 +1185,13 @@ func TestTagFilterMatchesCanonicalDuplicateVideo(t *testing.T) {
 	for _, item := range items {
 		gotIDs[item.ID] = true
 	}
-	for _, want := range []string{"pikpak-canonical", "spider91-visible"} {
+	for _, want := range []string{"pikpak-canonical", "scriptcrawler-crawler-a-visible"} {
 		if !gotIDs[want] {
 			t.Fatalf("tagged video ids = %#v, want %s", gotIDs, want)
 		}
 	}
-	if got := mustTagByLabel(t, ctx, cat, "91porn").Count; got != 2 {
-		t.Fatalf("91porn count = %d, want 2 visible canonical videos", got)
+	if got := mustTagByLabel(t, ctx, cat, "crawler-tag").Count; got != 2 {
+		t.Fatalf("crawler-tag count = %d, want 2 visible canonical videos", got)
 	}
 }
 

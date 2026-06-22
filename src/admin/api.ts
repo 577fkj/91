@@ -78,7 +78,7 @@ export function checkUpdate() {
 
 export type AdminDrive = {
   id: string;
-  kind: "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage" | "spider91";
+  kind: "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage";
   name: string;
   rootId: string;
   status: string;
@@ -92,10 +92,6 @@ export type AdminDrive = {
    * 替代旧版硬编码 p115 "影视" 目录例外分支。
    */
   skipDirIds: string[];
-  // spider91 上次成功爬取时间（unix 秒）；其它 kind 留空。
-  lastCrawlAt?: number;
-  // spider91 专用代理地址；仅后台管理接口返回，用于编辑表单回显。
-  spider91Proxy?: string;
   // Google Drive 是否使用 OpenList 在线续期 API；未配置时后端按 true 返回。
   googleDriveUseOnlineAPI?: boolean;
   // Google Drive OpenList 在线续期 API 地址；为空时后端使用驱动默认值。
@@ -157,7 +153,7 @@ export function getDriveStorage() {
 
 export type UpsertDriveInput = {
   id: string;
-  kind: "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage" | "spider91";
+  kind: "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage";
   name: string;
   rootId: string;
   credentials: Record<string, string>;
@@ -206,7 +202,7 @@ export function stopDriveTasks(id: string) {
 export type AdminCrawler = {
   id: string;
   name: string;
-  kind: "scriptcrawler" | "spider91";
+  kind: "scriptcrawler";
   status: string;
   lastError?: string;
   scriptPath: string;
@@ -577,6 +573,7 @@ export type AdminDeletedVideo = {
   fileId: string;
   fileName: string;
   size: number;
+  reason?: string;
   deletedAt: number;
 };
 
@@ -673,12 +670,6 @@ export type Theme = "dark" | "pink" | "sky";
 
 export type Settings = {
   theme: Theme;
-  /**
-   * spider91 视频迁移到云盘时的目标 drive ID（必须是已挂载的 pikpak、p115、p123、onedrive、googledrive 或 wopan drive）。
-   * - 空字符串：本地保存，不上传到云盘。
-   * - 非空：显式指定。后端会校验 drive 存在且 kind ∈ {pikpak, p115, p123, onedrive, googledrive, wopan}。
-   */
-  spider91UploadDriveId: string;
 };
 
 export function getSettings() {

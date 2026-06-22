@@ -1,4 +1,4 @@
-export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage" | "spider91";
+export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage";
 
 export const kindAbbr: Record<string, string> = {
   quark: "Qk",
@@ -10,7 +10,6 @@ export const kindAbbr: Record<string, string> = {
   onedrive: "OD",
   googledrive: "GD",
   localstorage: "Lo",
-  spider91: "91",
 };
 
 export function driveKindAbbr(kind: string): string {
@@ -33,7 +32,6 @@ export const kindLabel: Record<string, string> = {
   onedrive: "OneDrive",
   googledrive: "Google Drive",
   localstorage: "本地存储",
-  spider91: "91 爬虫",
 };
 
 export type FormState = {
@@ -42,7 +40,6 @@ export type FormState = {
   name: string;
   rootId: string;
   creds: Record<string, string>;
-  spider91UploadDriveId: string;
 };
 
 export const emptyForm: FormState = {
@@ -51,7 +48,6 @@ export const emptyForm: FormState = {
   name: "",
   rootId: "",
   creds: {},
-  spider91UploadDriveId: "",
 };
 
 export const idleNightlyStatus = {
@@ -132,12 +128,11 @@ export function defaultRootId(kind: Kind): string {
   if (kind === "onedrive") return "root";
   if (kind === "googledrive") return "root";
   if (kind === "localstorage") return "/";
-  if (kind === "spider91") return "/";
   return "0";
 }
 
 export function usesRootDirectoryID(kind: Kind): boolean {
-  return kind !== "localstorage" && kind !== "spider91";
+  return kind !== "localstorage";
 }
 
 export function rootIdPlaceholder(kind: Kind): string {
@@ -168,8 +163,6 @@ export function credentialHelp(kind: Kind, isEdit: boolean): string {
         : "请参考OpenList文档中关于谷歌云盘的配置方法";
     case "localstorage":
       return `填写服务器可访问的本地目录绝对路径，例如 /mnt/videos。系统会扫描该目录及子目录中的视频文件和 .strm 文件；.strm 可指向 HTTP/HTTPS 直链或本地视频路径（指向目录外需开启下方开关）。Docker 部署时请填写容器内路径。${note}`;
-    case "spider91":
-      return "91Spider 不再支持通过网盘添加或编辑。请到后台爬虫管理页面添加爬虫脚本。";
     default:
       return "";
   }
@@ -376,15 +369,6 @@ export function credentialFields(kind: Kind, creds: Record<string, string> = {})
             { value: "true", label: "开启（允许任意本地路径）" },
           ],
           help: "开启后 .strm 可指向本目录之外的本地文件（如 rclone 挂载点）。注意：等于允许通过 .strm 读取服务器上任意文件，请只在自己完全掌控媒体目录时开启。Docker 部署时路径必须是容器内路径。",
-        },
-      ];
-    case "spider91":
-      return [
-        {
-          key: "proxy",
-          label: "代理地址（可选）",
-          placeholder: "http://127.0.0.1:7890",
-          help: "支持 http://、https://、socks5://、socks5h://代理",
         },
       ];
   }

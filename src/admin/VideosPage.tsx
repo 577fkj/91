@@ -701,7 +701,10 @@ function BlacklistTab({ onStatsChanged }: { onStatsChanged: () => void }) {
               {list.map((v) => (
                 <tr key={v.id}>
                   <td data-label="文件名">
-                    <span className="admin-blacklist-filename">{v.fileName || <span className="admin-text-faint">（无文件名）</span>}</span>
+                    <div className="admin-blacklist-filecell">
+                      <span className="admin-blacklist-filename">{v.fileName || <span className="admin-text-faint">（无文件名）</span>}</span>
+                      {v.reason === "duplicate" && <span className="admin-blacklist-reason-pill">重复文件</span>}
+                    </div>
                   </td>
                   <td data-label="来源" className="admin-mono-cell">
                     {driveNameMap.get(v.driveId) ?? v.driveId}

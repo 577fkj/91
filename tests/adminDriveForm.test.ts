@@ -22,8 +22,8 @@ const appSource = readFileSync(
   new URL("../src/App.tsx", import.meta.url),
   "utf8"
 );
-const spider91UploadTargetSource = readFileSync(
-  new URL("../src/admin/drive/Spider91UploadTargetField.tsx", import.meta.url),
+const crawlerUploadTargetSource = readFileSync(
+  new URL("../src/admin/drive/CrawlerUploadTargetField.tsx", import.meta.url),
   "utf8"
 );
 const driveFormSource = readFileSync(
@@ -43,7 +43,7 @@ const constantsSource = readFileSync(
   "utf8"
 );
 
-const combinedSource = drivesPageSource + "\n" + driveFormSource + "\n" + constantsSource + "\n" + spider91UploadTargetSource;
+const combinedSource = drivesPageSource + "\n" + driveFormSource + "\n" + constantsSource + "\n" + crawlerUploadTargetSource;
 
 function driveTypeOptions() {
   const match = /const DRIVE_OPTIONS:\s*DriveOption\[]\s*=\s*\[([\s\S]*?)\];/.exec(
@@ -74,22 +74,22 @@ test("crawler sources are not selectable as storage drives", () => {
   );
 });
 
-test("spider91 upload target uses explicit local-save option instead of auto target", () => {
+test("crawler upload target uses explicit local-save option instead of auto target", () => {
   assert.match(combinedSource, /本地保存，不上传/);
   assert.match(
-    combinedSource,
-    /d\.kind === "pikpak"[\s\S]*d\.kind === "p115"[\s\S]*d\.kind === "p123"[\s\S]*d\.kind === "onedrive"[\s\S]*d\.kind === "googledrive"[\s\S]*d\.kind === "wopan"[\s\S]*d\.kind === "guangyapan"/
+    crawlerPageSource,
+    /UPLOAD_TARGET_KINDS\s*=\s*new Set\(\["p115", "pikpak", "p123", "googledrive", "onedrive", "wopan", "guangyapan"\]\)/
   );
-  assert.match(crawlerPageSource, /UPLOAD_TARGET_KINDS[\s\S]*"wopan"[\s\S]*"guangyapan"/);
+  assert.match(crawlerPageSource, /drives\.filter\(\(d\) => UPLOAD_TARGET_KINDS\.has\(d\.kind\)\)/);
   assert.doesNotMatch(combinedSource, /自动：唯一/);
   assert.doesNotMatch(combinedSource, /自动模式/);
-  assert.doesNotMatch(combinedSource, /较早的视频会上传到该云盘根目录下的 91 Spider 文件夹/);
+  assert.doesNotMatch(combinedSource, /较早的视频会上传到该云盘根目录下/);
 });
 
-test("spider91 upload target select uses an aligned custom arrow", () => {
-  assert.match(spider91UploadTargetSource, /className="admin-form-select-wrap"/);
-  assert.match(spider91UploadTargetSource, /className="admin-form-select"/);
-  assert.match(spider91UploadTargetSource, /className="admin-form-select__icon"/);
+test("crawler upload target select uses an aligned custom arrow", () => {
+  assert.match(crawlerUploadTargetSource, /className="admin-form-select-wrap"/);
+  assert.match(crawlerUploadTargetSource, /className="admin-form-select"/);
+  assert.match(crawlerUploadTargetSource, /className="admin-form-select__icon"/);
   assert.match(adminCss, /\.admin-form__row \.admin-form-select\s*\{[^}]*appearance\s*:\s*none/s);
   assert.match(
     adminCss,
@@ -97,11 +97,11 @@ test("spider91 upload target select uses an aligned custom arrow", () => {
   );
 });
 
-test("drive form hides root directory id for localstorage and spider91", () => {
+test("drive form hides root directory id for localstorage", () => {
   assert.match(combinedSource, /<label[^>]*>根目录 ID<\/label>/);
   assert.match(
     combinedSource,
-    /usesRootDirectoryID\(kind:\s*Kind\):\s*boolean\s*\{\s*return kind !== "localstorage" && kind !== "spider91";\s*\}/
+    /usesRootDirectoryID\(kind:\s*Kind\):\s*boolean\s*\{\s*return kind !== "localstorage";\s*\}/
   );
   assert.match(combinedSource, /\{usesRootDirectoryID\(form\.kind\) && \(/);
   assert.match(combinedSource, /\{usesRootDirectoryID\(d\.kind\) && \(/);
@@ -208,7 +208,7 @@ test("localstorage drive form asks for a server directory path", () => {
   assertDriveTypeOption("localstorage", "本地存储");
 
   const match =
-    /case "localstorage":\s*return \[([\s\S]*?)\];\s*case "spider91":/.exec(
+    /case "localstorage":\s*return \[([\s\S]*?)\];\s*\}\s*\}/.exec(
       combinedSource
     );
   assert.ok(match, "localstorage credential field block should be present");
@@ -217,7 +217,8 @@ test("localstorage drive form asks for a server directory path", () => {
   assert.match(fields, /key: "path"/);
   assert.match(fields, /label: "本地目录路径"/);
   assert.match(combinedSource, /if \(kind === "localstorage"\) return "\/"/);
-  assert.match(combinedSource, /kind !== "localstorage" && kind !== "spider91"/);
+  assert.match(combinedSource, /kind !== "localstorage"/);
+  assert.doesNotMatch(combinedSource, /spider91/);
 });
 
 test("drive type selector keeps primary source order", () => {
@@ -261,7 +262,7 @@ test("crawler management is a separate admin section", () => {
   assert.match(crawlerPageSource, /链接导入/);
   assert.match(crawlerPageSource, /测试脚本/);
   assert.match(crawlerPageSource, /测试通过/);
-  assert.match(crawlerPageSource, /Spider91UploadTargetField/);
+  assert.match(crawlerPageSource, /CrawlerUploadTargetField/);
   assert.match(crawlerPageSource, /uploadDriveId/);
   assert.match(crawlerPageSource, /api\.setDriveTeaserEnabled/);
   assert.match(crawlerPageSource, /admin-crawler-preview-card-toggle/);
@@ -361,7 +362,7 @@ test("nightly scan duplicate trigger uses full-scan busy message", () => {
 });
 
 test("drive generation panel shows scan or crawler status first", () => {
-  assert.match(driveComponentsSource, /label=\{d\.kind === "spider91" \? "已废弃" : "扫盘"\}/);
+  assert.match(driveComponentsSource, /label="扫盘"/);
   assert.match(driveComponentsSource, /status=\{d\.scanGenerationStatus\}/);
   assert.match(driveComponentsSource, /showCounts=\{false\}/);
   assert.match(driveComponentsSource, /status\?\.scannedCount/);
@@ -371,11 +372,10 @@ test("drive generation panel shows scan or crawler status first", () => {
   assert.match(constantsSource, /if \(state === "scanning"\) return "扫盘中"/);
 });
 
-test("legacy spider91 storage is disabled in drive management", () => {
-  assert.match(drivesPageSource, /91Spider 不再支持通过网盘运行，请到爬虫管理添加爬虫脚本/);
-  assert.match(drivesPageSource, /disabled=\{d\.kind === "spider91"\}/);
-  assert.match(drivesPageSource, /已废弃，请到爬虫管理添加/);
-  assert.match(constantsSource, /91Spider 不再支持通过网盘添加或编辑/);
+test("drive management has no spider91 storage branch", () => {
+  assert.doesNotMatch(drivesPageSource, /spider91|91Spider/);
+  assert.doesNotMatch(constantsSource, /spider91|91Spider/);
+  assert.doesNotMatch(driveComponentsSource, /spider91|91Spider/);
 });
 
 test("drive detail selection is stored in the URL history", () => {
@@ -405,16 +405,16 @@ test("drive discard confirmation matches delete confirmation modal styling", () 
 test("new drive type selection alone is not treated as unsaved config", () => {
   assert.match(
     drivesPageSource,
-    /const formDirty = form\.id\s*\?\s*!sameForm\(form, initialForm\)\s*:\s*hasCreateFormChanges\(form, initialForm\);/
+    /const formDirty = form\.id\s*\?\s*!sameForm\(form, initialForm\)\s*:\s*hasCreateFormChanges\(form\);/
   );
   assert.match(drivesPageSource, /function handleCreateFormChange\(nextForm: FormState\)/);
   assert.match(
     drivesPageSource,
-    /if \(!nextForm\.id && !hasCreateFormChanges\(nextForm, initialForm\)\) \{\s*setInitialForm\(nextForm\);/
+    /if \(!nextForm\.id && !hasCreateFormChanges\(nextForm\)\) \{\s*setInitialForm\(nextForm\);/
   );
   assert.match(drivesPageSource, /onChange=\{handleCreateFormChange\}/);
 
-  const match = /function hasCreateFormChanges\(form: FormState, initial: FormState\): boolean \{([\s\S]*?)\n\}/.exec(
+  const match = /function hasCreateFormChanges\(form: FormState\): boolean \{([\s\S]*?)\n\}/.exec(
     drivesPageSource
   );
   assert.ok(match, "create form dirty helper should be present");
@@ -422,7 +422,6 @@ test("new drive type selection alone is not treated as unsaved config", () => {
 
   assert.match(helper, /form\.name\.trim\(\) !== ""/);
   assert.match(helper, /form\.rootId\.trim\(\) !== ""/);
-  assert.match(helper, /form\.spider91UploadDriveId !== initial\.spider91UploadDriveId/);
   assert.match(helper, /Object\.values\(form\.creds\)\.some/);
   assert.doesNotMatch(helper, /form\.kind/);
 });

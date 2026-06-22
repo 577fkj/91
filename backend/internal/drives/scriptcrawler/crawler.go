@@ -41,7 +41,6 @@ type CrawlerConfig struct {
 	Driver          *Driver
 	Catalog         *catalog.Catalog
 	CrawlerName     string
-	SourceKind      string
 	PythonPath      string
 	FFmpegPath      string
 	FFprobePath     string
@@ -393,7 +392,7 @@ func (c *Crawler) RunOnce(ctx context.Context, targetNew int) (*CrawlResult, err
 }
 
 func (c *Crawler) writeSeenSourceIDs(ctx context.Context, path string) (int, error) {
-	seenIDs, err := c.cfg.Catalog.ListCrawlerSourceIDs(ctx, c.sourceKind(), c.cfg.Driver.ID())
+	seenIDs, err := c.cfg.Catalog.ListCrawlerSourceIDs(ctx, Kind, c.cfg.Driver.ID())
 	if err != nil {
 		return 0, err
 	}
@@ -514,8 +513,7 @@ func (c *Crawler) processItem(ctx context.Context, item Item) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	sourceKind := c.sourceKind()
-	videoID := BuildVideoIDForKind(sourceKind, c.cfg.Driver.ID(), sourceID)
+	videoID := BuildVideoID(c.cfg.Driver.ID(), sourceID)
 	if deleted, err := c.cfg.Catalog.IsVideoDeleted(ctx, videoID); err != nil {
 		return false, err
 	} else if deleted {
@@ -593,9 +591,9 @@ func (c *Crawler) processItem(ctx context.Context, item Item) (bool, error) {
 	}
 	v.SampledSHA256 = sampled
 	v.FingerprintStatus = "ready"
-	if duplicate, err := c.cfg.Catalog.FindEquivalentVideo(ctx, v); err == nil && duplicate != nil {
+	if duplicate, err := c.cfg.Catalog.FindVideoBySampledFingerprint(ctx, v); err == nil && duplicate != nil {
 		_ = os.Remove(videoPath)
-		if markErr := c.cfg.Catalog.MarkCrawlerSourceSeen(ctx, sourceKind, c.cfg.Driver.ID(), sourceID, "duplicate", duplicate.ID, sampled, size); markErr != nil {
+		if markErr := c.cfg.Catalog.MarkCrawlerSourceSeen(ctx, Kind, c.cfg.Driver.ID(), sourceID, "duplicate", duplicate.ID, sampled, size); markErr != nil {
 			log.Printf("[scriptcrawler] drive=%s source_id=%s mark duplicate seen: %v", c.cfg.Driver.ID(), sourceID, markErr)
 		}
 		log.Printf("[scriptcrawler] drive=%s source_id=%s duplicate_of=%s title=%q size=%d", c.cfg.Driver.ID(), sourceID, duplicate.ID, title, size)
@@ -606,19 +604,25 @@ func (c *Crawler) processItem(ctx context.Context, item Item) (bool, error) {
 	}
 
 	thumbReady := false
+	thumbPath := ""
+	commonThumbPath := ""
 	if item.Thumbnail.URL != "" || item.Thumbnail.LocalFile != "" {
 		thumbFile := sourceID + detectThumbExt(item.Thumbnail.URL, item.Thumbnail.LocalFile)
-		thumbPath, err := c.cfg.Driver.ThumbPath(thumbFile)
+		thumbPath, err = c.cfg.Driver.ThumbPath(thumbFile)
 		if err == nil {
 			if _, err := c.materializeMedia(ctx, item.Thumbnail, thumbPath, item.DetailURL, false); err != nil {
 				log.Printf("[scriptcrawler] drive=%s source_id=%s thumbnail failed: %v", c.cfg.Driver.ID(), sourceID, err)
 			} else if c.cfg.CommonThumbDir != "" {
 				if err := os.MkdirAll(c.cfg.CommonThumbDir, 0o755); err != nil {
 					log.Printf("[scriptcrawler] drive=%s common thumbs mkdir: %v", c.cfg.Driver.ID(), err)
-				} else if err := copyFileAtomic(thumbPath, mediaasset.ThumbnailPathInDir(c.cfg.CommonThumbDir, videoID)); err != nil {
-					log.Printf("[scriptcrawler] drive=%s source_id=%s copy thumbnail: %v", c.cfg.Driver.ID(), sourceID, err)
 				} else {
-					thumbReady = true
+					dst := mediaasset.ThumbnailPathInDir(c.cfg.CommonThumbDir, videoID)
+					if err := copyFileAtomic(thumbPath, dst); err != nil {
+						log.Printf("[scriptcrawler] drive=%s source_id=%s copy thumbnail: %v", c.cfg.Driver.ID(), sourceID, err)
+					} else {
+						commonThumbPath = dst
+						thumbReady = true
+					}
 				}
 			}
 		}
@@ -626,11 +630,48 @@ func (c *Crawler) processItem(ctx context.Context, item Item) (bool, error) {
 	if thumbReady {
 		v.ThumbnailURL = "/p/thumb/" + v.ID
 	}
+	if duplicate, err := c.findNearDuplicateVideo(ctx, v, commonThumbPath); err != nil {
+		_ = os.Remove(videoPath)
+		if thumbPath != "" {
+			_ = os.Remove(thumbPath)
+		}
+		if commonThumbPath != "" {
+			_ = os.Remove(commonThumbPath)
+		}
+		return false, fmt.Errorf("near duplicate lookup: %w", err)
+	} else if duplicate != nil && duplicate.video != nil {
+		if v.Size > duplicate.video.Size {
+			if err := c.cfg.Catalog.DeleteVideoWithTombstoneReason(ctx, duplicate.video.ID, catalog.DeletedVideoReasonDuplicate); err != nil {
+				_ = os.Remove(videoPath)
+				if thumbPath != "" {
+					_ = os.Remove(thumbPath)
+				}
+				if commonThumbPath != "" {
+					_ = os.Remove(commonThumbPath)
+				}
+				return false, fmt.Errorf("delete smaller near duplicate %s: %w", duplicate.video.ID, err)
+			}
+			log.Printf("[scriptcrawler] drive=%s source_id=%s replacing_smaller_near_duplicate=%s old_size=%d new_size=%d title_similarity=%.3f thumbnail_ssim=%.3f title=%q duration=%d", c.cfg.Driver.ID(), sourceID, duplicate.video.ID, duplicate.video.Size, v.Size, duplicate.titleSimilarity, duplicate.thumbnailSSIM, title, v.DurationSeconds)
+		} else {
+			_ = os.Remove(videoPath)
+			if thumbPath != "" {
+				_ = os.Remove(thumbPath)
+			}
+			if commonThumbPath != "" {
+				_ = os.Remove(commonThumbPath)
+			}
+			if markErr := c.cfg.Catalog.MarkCrawlerSourceSeen(ctx, Kind, c.cfg.Driver.ID(), sourceID, "duplicate", duplicate.video.ID, sampled, size); markErr != nil {
+				log.Printf("[scriptcrawler] drive=%s source_id=%s mark near duplicate seen: %v", c.cfg.Driver.ID(), sourceID, markErr)
+			}
+			log.Printf("[scriptcrawler] drive=%s source_id=%s near_duplicate_of=%s old_size=%d new_size=%d title_similarity=%.3f thumbnail_ssim=%.3f title=%q duration=%d", c.cfg.Driver.ID(), sourceID, duplicate.video.ID, duplicate.video.Size, v.Size, duplicate.titleSimilarity, duplicate.thumbnailSSIM, title, v.DurationSeconds)
+			return false, nil
+		}
+	}
 	if err := c.cfg.Catalog.UpsertVideo(ctx, v); err != nil {
 		_ = os.Remove(videoPath)
 		return false, err
 	}
-	if err := c.cfg.Catalog.MarkCrawlerSourceSeen(ctx, sourceKind, c.cfg.Driver.ID(), sourceID, "imported", v.ID, sampled, size); err != nil {
+	if err := c.cfg.Catalog.MarkCrawlerSourceSeen(ctx, Kind, c.cfg.Driver.ID(), sourceID, "imported", v.ID, sampled, size); err != nil {
 		log.Printf("[scriptcrawler] drive=%s source_id=%s mark imported seen: %v", c.cfg.Driver.ID(), sourceID, err)
 	}
 	log.Printf("[scriptcrawler] drive=%s source_id=%s ok title=%q size=%d", c.cfg.Driver.ID(), sourceID, title, size)
@@ -1105,16 +1146,6 @@ func stableURLKey(raw string) string {
 	return u.String()
 }
 
-func (c *Crawler) sourceKind() string {
-	if c == nil {
-		return Kind
-	}
-	if v := strings.TrimSpace(c.cfg.SourceKind); v != "" {
-		return v
-	}
-	return Kind
-}
-
 func (c *Crawler) crawlerTagName() string {
 	if c == nil {
 		return ""
@@ -1146,14 +1177,7 @@ func candidateBudgetForTarget(targetNew int) int {
 }
 
 func BuildVideoID(driveID, sourceID string) string {
-	return BuildVideoIDForKind(Kind, driveID, sourceID)
-}
-
-func BuildVideoIDForKind(kind, driveID, sourceID string) string {
-	if kind = strings.TrimSpace(kind); kind == "" {
-		kind = Kind
-	}
-	return kind + "-" + driveID + "-" + sourceID
+	return Kind + "-" + driveID + "-" + sourceID
 }
 
 func detectVideoExt(rawURL, localFile string) string {

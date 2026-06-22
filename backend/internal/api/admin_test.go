@@ -759,7 +759,7 @@ func TestHandleUpsertGoogleDriveMergesOAuthCredentials(t *testing.T) {
 	}
 }
 
-func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
+func TestHandleUpsertUnknownDriveKindIsRejected(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
 	if err != nil {
@@ -772,14 +772,12 @@ func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
 	})
 
 	if err := cat.UpsertDrive(ctx, &catalog.Drive{
-		ID:     "spider91-main",
-		Kind:   "spider91",
-		Name:   "91 Spider",
+		ID:     "unknown-main",
+		Kind:   "unknown",
+		Name:   "Unknown",
 		RootID: "/",
 		Credentials: map[string]string{
-			"last_crawl_at": "1800000000",
-			"proxy":         "http://old-proxy.local:7890",
-			"script_path":   "/opt/video-site-91/data/crawler-scripts/legacy-spider.py",
+			"token": "old-token",
 		},
 		Status: "ok",
 	}); err != nil {
@@ -787,33 +785,27 @@ func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/drives", strings.NewReader(`{
-		"id": "spider91-main",
-		"kind": "spider91",
-		"name": "91 Spider",
+		"id": "unknown-main",
+		"kind": "unknown",
+		"name": "Unknown",
 		"rootId": "/",
-		"credentials": {"proxy": " socks5h://proxy-user:proxy-pass@127.0.0.1:7891 "}
+		"credentials": {"token": "new-token"}
 	}`))
 	rr := httptest.NewRecorder()
 	(&AdminServer{Catalog: cat}).handleUpsertDrive(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "爬虫管理") {
-		t.Fatalf("body = %q, want crawler management guidance", rr.Body.String())
+	if rr.Body.String() != "unsupported drive kind\n" {
+		t.Fatalf("body = %q, want unsupported kind", rr.Body.String())
 	}
 
-	got, err := cat.GetDrive(ctx, "spider91-main")
+	got, err := cat.GetDrive(ctx, "unknown-main")
 	if err != nil {
 		t.Fatalf("get drive: %v", err)
 	}
-	if got.Credentials["proxy"] != "http://old-proxy.local:7890" {
-		t.Fatalf("proxy = %q, want unchanged old proxy", got.Credentials["proxy"])
-	}
-	if got.Credentials["last_crawl_at"] != "1800000000" {
-		t.Fatalf("last_crawl_at = %q, want preserved", got.Credentials["last_crawl_at"])
-	}
-	if got.Credentials["script_path"] == "" {
-		t.Fatalf("script_path should be preserved")
+	if got.Credentials["token"] != "old-token" {
+		t.Fatalf("token = %q, want unchanged old token", got.Credentials["token"])
 	}
 }
 
@@ -939,31 +931,18 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 			t.Fatalf("close catalog: %v", err)
 		}
 	})
-	scriptPath := filepath.Join(tmp, "spider_91porn.py")
-	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"91Porn\"\n"), 0o644); err != nil {
+	scriptPath := filepath.Join(tmp, "demo_crawler.py")
+	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"Demo Crawler\"\n"), 0o644); err != nil {
 		t.Fatalf("write crawler script: %v", err)
 	}
 
 	for _, d := range []*catalog.Drive{
 		{
-			ID:     "spider91-main",
-			Kind:   "spider91",
-			Name:   "91 Spider",
-			RootID: "/",
-			Credentials: map[string]string{
-				"last_crawl_at": "1800000000",
-				"proxy":         " http://127.0.0.1:7890 ",
-				"script_path":   scriptPath,
-			},
-			Status: "ok",
-		},
-		{
-			ID:     "crawler-spider91",
+			ID:     "crawler-main",
 			Kind:   "scriptcrawler",
-			Name:   "91 Spider",
+			Name:   "Crawler",
 			RootID: "/",
 			Credentials: map[string]string{
-				"builtin":         "spider91",
 				"last_crawl_at":   "1800000000",
 				"proxy":           " http://127.0.0.1:7890 ",
 				"script_path":     scriptPath,
@@ -1005,27 +984,27 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	}
 	for _, v := range []*catalog.Video{
 		{
-			ID:              "spider91-crawler-spider91-local",
-			DriveID:         "crawler-spider91",
+			ID:              "scriptcrawler-crawler-main-local",
+			DriveID:         "crawler-main",
 			FileID:          "local.mp4",
 			FileName:        "local.mp4",
 			Title:           "Local",
 			Size:            123,
 			Ext:             "mp4",
-			ThumbnailURL:    "/p/thumb/spider91-crawler-spider91-local",
+			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-main-local",
 			PreviewStatus:   "ready",
 			DurationSeconds: 12,
 			PublishedAt:     time.Now(),
 		},
 		{
-			ID:              "scriptcrawler-crawler-spider91-migrated",
+			ID:              "scriptcrawler-crawler-main-migrated",
 			DriveID:         "p115-target",
 			FileID:          "uploaded-id",
 			FileName:        "migrated.mp4",
 			Title:           "Migrated",
 			Size:            456,
 			Ext:             "mp4",
-			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-spider91-migrated",
+			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-main-migrated",
 			PreviewStatus:   "ready",
 			DurationSeconds: 34,
 			PublishedAt:     time.Now(),
@@ -1096,35 +1075,32 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 			FingerprintReady: d.FingerprintReady,
 		}
 	}
-	if _, ok := byID["spider91-main"]; ok {
-		t.Fatal("legacy spider91 drive should not be returned by crawler list")
-	}
 	if _, ok := byID["crawler-script-deleted"]; ok {
 		t.Fatal("crawler without script_path should not be returned by crawler list")
 	}
-	if byID["crawler-spider91"].Kind != "scriptcrawler" {
-		t.Fatalf("crawler kind = %q, want scriptcrawler", byID["crawler-spider91"].Kind)
+	if byID["crawler-main"].Kind != "scriptcrawler" {
+		t.Fatalf("crawler kind = %q, want scriptcrawler", byID["crawler-main"].Kind)
 	}
-	if byID["crawler-spider91"].Name != "91Porn" {
-		t.Fatalf("crawler name = %q, want script metadata name", byID["crawler-spider91"].Name)
+	if byID["crawler-main"].Name != "Demo Crawler" {
+		t.Fatalf("crawler name = %q, want script metadata name", byID["crawler-main"].Name)
 	}
-	if byID["crawler-spider91"].Proxy != "http://127.0.0.1:7890" {
-		t.Fatalf("crawler proxy = %q, want trimmed proxy", byID["crawler-spider91"].Proxy)
+	if byID["crawler-main"].Proxy != "http://127.0.0.1:7890" {
+		t.Fatalf("crawler proxy = %q, want trimmed proxy", byID["crawler-main"].Proxy)
 	}
-	if byID["crawler-spider91"].UploadDriveID != "p115-target" {
-		t.Fatalf("uploadDriveId = %q, want p115-target", byID["crawler-spider91"].UploadDriveID)
+	if byID["crawler-main"].UploadDriveID != "p115-target" {
+		t.Fatalf("uploadDriveId = %q, want p115-target", byID["crawler-main"].UploadDriveID)
 	}
-	if byID["crawler-spider91"].TeaserEnabled {
+	if byID["crawler-main"].TeaserEnabled {
 		t.Fatal("teaserEnabled = true, want false from crawler drive")
 	}
-	if byID["crawler-spider91"].LastCrawlAt != 1800000000 {
-		t.Fatalf("lastCrawlAt = %d, want 1800000000", byID["crawler-spider91"].LastCrawlAt)
+	if byID["crawler-main"].LastCrawlAt != 1800000000 {
+		t.Fatalf("lastCrawlAt = %d, want 1800000000", byID["crawler-main"].LastCrawlAt)
 	}
-	if byID["crawler-spider91"].TotalCrawled != 2 || byID["crawler-spider91"].LocalVideos != 1 || byID["crawler-spider91"].MigratedVideo != 1 {
-		t.Fatalf("crawler counts = total %d local %d migrated %d, want 2/1/1", byID["crawler-spider91"].TotalCrawled, byID["crawler-spider91"].LocalVideos, byID["crawler-spider91"].MigratedVideo)
+	if byID["crawler-main"].TotalCrawled != 2 || byID["crawler-main"].LocalVideos != 1 || byID["crawler-main"].MigratedVideo != 1 {
+		t.Fatalf("crawler counts = total %d local %d migrated %d, want 2/1/1", byID["crawler-main"].TotalCrawled, byID["crawler-main"].LocalVideos, byID["crawler-main"].MigratedVideo)
 	}
-	if byID["crawler-spider91"].ThumbnailReady != 2 || byID["crawler-spider91"].TeaserReady != 2 || byID["crawler-spider91"].FingerprintReady != 2 {
-		t.Fatalf("asset ready counts = thumb %d teaser %d fingerprint %d, want 2/2/2", byID["crawler-spider91"].ThumbnailReady, byID["crawler-spider91"].TeaserReady, byID["crawler-spider91"].FingerprintReady)
+	if byID["crawler-main"].ThumbnailReady != 2 || byID["crawler-main"].TeaserReady != 2 || byID["crawler-main"].FingerprintReady != 2 {
+		t.Fatalf("asset ready counts = thumb %d teaser %d fingerprint %d, want 2/2/2", byID["crawler-main"].ThumbnailReady, byID["crawler-main"].TeaserReady, byID["crawler-main"].FingerprintReady)
 	}
 	if _, ok := byID["onedrive-main"]; ok {
 		t.Fatal("onedrive should not be returned by crawler list")
@@ -1146,10 +1122,7 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	for _, d := range drives {
 		driveIDs[d.ID] = true
 	}
-	if !driveIDs["spider91-main"] {
-		t.Fatal("legacy spider91 drive should remain visible in drive list for deletion")
-	}
-	if driveIDs["crawler-spider91"] {
+	if driveIDs["crawler-main"] {
 		t.Fatal("scriptcrawler should not be returned by drive list")
 	}
 }
@@ -1169,15 +1142,15 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 
 	srv := &AdminServer{Catalog: cat}
 	scriptPath := filepath.Join(tmp, "custom.py")
-	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"91 Spider\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"Demo Crawler\"\n"), 0o644); err != nil {
 		t.Fatalf("write crawler script: %v", err)
 	}
 
 	// 不再内置任何爬虫：没有脚本路径的保存请求必须被拒绝，
 	// 旧的 builtin 字段也不再有"免脚本"特权。
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/crawlers", strings.NewReader(`{
-		"id": "spider91-main",
-		"builtin": "spider91",
+		"id": "crawler-main",
+		"builtin": "legacy",
 		"scriptPath": "",
 		"targetNew": "15"
 	}`))
@@ -1189,8 +1162,8 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 
 	// 带脚本路径时正常保存，且请求中的 builtin 字段被忽略，不会写入凭证。
 	req = httptest.NewRequest(http.MethodPost, "/admin/api/crawlers", strings.NewReader(`{
-		"id": "spider91-main",
-		"builtin": "spider91",
+		"id": "crawler-main",
+		"builtin": "legacy",
 		"scriptPath": "`+scriptPath+`",
 		"targetNew": "15",
 		"teaserEnabled": false
@@ -1201,7 +1174,7 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 
-	got, err := cat.GetDrive(ctx, "spider91-main")
+	got, err := cat.GetDrive(ctx, "crawler-main")
 	if err != nil {
 		t.Fatalf("get crawler drive: %v", err)
 	}
@@ -1211,7 +1184,7 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 	if got.Credentials["python_path"] != "" || got.Credentials["config_json"] != "" {
 		t.Fatalf("legacy hidden credentials should not be saved: %+v", got.Credentials)
 	}
-	if got.Name != "91 Spider" {
+	if got.Name != "Demo Crawler" {
 		t.Fatalf("name = %q, want script metadata name", got.Name)
 	}
 	if got.Credentials["script_path"] != scriptPath {
