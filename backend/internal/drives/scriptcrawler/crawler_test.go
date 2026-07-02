@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/video-site/backend/internal/catalog"
 	"github.com/video-site/backend/internal/fingerprint"
+	"github.com/video-site/backend/internal/mediaasset"
 )
 
 const (
@@ -40,6 +44,12 @@ func init() {
 	case strings.HasPrefix(base, "ffmpeg-hls"):
 		if len(os.Args) == 0 {
 			os.Exit(1)
+		}
+		if argsFile := os.Getenv("GO_SCRIPTCRAWLER_FFMPEG_ARGS_FILE"); argsFile != "" {
+			if err := os.WriteFile(argsFile, []byte(strings.Join(os.Args[1:], "\n")+"\n"), 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 		}
 		out := os.Args[len(os.Args)-1]
 		if err := os.WriteFile(out, []byte("hls-video-bytes"), 0o644); err != nil {
@@ -100,6 +110,24 @@ func writeScriptCrawlerFFprobeStub(t *testing.T, dir string, ok bool) string {
 func writeScriptCrawlerFFmpegStub(t *testing.T, dir string) string {
 	t.Helper()
 	return copyTestExecutable(t, dir, "ffmpeg-hls")
+}
+
+func writeScriptCrawlerJPEG(t *testing.T, path string, c color.RGBA) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create jpeg: %v", err)
+	}
+	defer f.Close()
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
 }
 
 func TestCrawlerRunOnceImportsLocalFileAndSkipsExisting(t *testing.T) {
@@ -280,7 +308,7 @@ func TestCrawlerRunOnceUsesCurrentDrivePreviewSwitch(t *testing.T) {
 	}
 }
 
-func TestCrawlerRunOnceUsesSourceKindNamespace(t *testing.T) {
+func TestCrawlerRunOnceUsesDefaultCrawlerNamespace(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	cat, err := catalog.Open(filepath.Join(tmp, "catalog.db"))
@@ -306,7 +334,6 @@ func TestCrawlerRunOnceUsesSourceKindNamespace(t *testing.T) {
 	c := NewCrawler(CrawlerConfig{
 		Driver:      drv,
 		Catalog:     cat,
-		SourceKind:  "spider91",
 		PythonPath:  wrapper,
 		FFprobePath: writeScriptCrawlerFFprobeStub(t, tmp, true),
 		ScriptPath:  dummyScript,
@@ -318,12 +345,9 @@ func TestCrawlerRunOnceUsesSourceKindNamespace(t *testing.T) {
 	if res.NewVideos != 1 || res.SeenSnapshot != 0 {
 		t.Fatalf("result = new:%d seen:%d, want 1/0", res.NewVideos, res.SeenSnapshot)
 	}
-	videoID := BuildVideoIDForKind("spider91", "demo", "abc-123")
+	videoID := BuildVideoID("demo", "abc-123")
 	if _, err := cat.GetVideo(ctx, videoID); err != nil {
-		t.Fatalf("get source-kind video: %v", err)
-	}
-	if _, err := cat.GetVideo(ctx, BuildVideoID("demo", "abc-123")); err == nil {
-		t.Fatalf("default namespace video unexpectedly exists")
+		t.Fatalf("get crawler video: %v", err)
 	}
 
 	res, err = c.RunOnce(ctx, 1)
@@ -576,6 +600,182 @@ func TestCrawlerRunOnceSkipsFingerprintDuplicateAndContinues(t *testing.T) {
 	}
 }
 
+func TestCrawlerProcessItemSkipsNearDuplicateByTitleDurationAndThumbnail(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	cat, err := catalog.Open(filepath.Join(tmp, "catalog.db"))
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	drv := New(Config{ID: "demo", RootDir: filepath.Join(tmp, "crawler")})
+	if err := drv.Init(ctx); err != nil {
+		t.Fatalf("driver init: %v", err)
+	}
+	commonThumbDir := filepath.Join(tmp, "common-thumbs")
+	if err := os.MkdirAll(commonThumbDir, 0o755); err != nil {
+		t.Fatalf("mkdir common thumbs: %v", err)
+	}
+
+	now := time.Now()
+	canonicalID := "existing-canonical"
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:              canonicalID,
+		DriveID:         "other-drive",
+		FileID:          "existing.mp4",
+		FileName:        "existing.mp4",
+		Title:           "91 Test Similar Title 1215516",
+		DurationSeconds: 257,
+		Size:            12345,
+		Ext:             "mp4",
+		ThumbnailURL:    "/p/thumb/" + canonicalID,
+		PublishedAt:     now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("seed canonical video: %v", err)
+	}
+	writeScriptCrawlerJPEG(t, mediaasset.ThumbnailPathInDir(commonThumbDir, canonicalID), color.RGBA{R: 210, G: 40, B: 40, A: 255})
+
+	outputDir := drv.OutputDir()
+	mediaPath := filepath.Join(outputDir, "near-video.mp4")
+	if err := os.WriteFile(mediaPath, []byte("near-duplicate-but-different-bytes"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	thumbPath := filepath.Join(outputDir, "near-thumb.jpg")
+	writeScriptCrawlerJPEG(t, thumbPath, color.RGBA{R: 211, G: 41, B: 41, A: 255})
+
+	c := NewCrawler(CrawlerConfig{
+		Driver:         drv,
+		Catalog:        cat,
+		FFprobePath:    writeScriptCrawlerFFprobeStub(t, tmp, true),
+		CommonThumbDir: commonThumbDir,
+	})
+	imported, err := c.processItem(ctx, Item{
+		SourceID:        "near-source",
+		Title:           "91 Test Similar Title 1215516 - source suffix",
+		Author:          "helper",
+		DurationSeconds: 257,
+		Media:           MediaRef{LocalFile: mediaPath},
+		Thumbnail:       MediaRef{LocalFile: thumbPath},
+	})
+	if err != nil {
+		t.Fatalf("process item: %v", err)
+	}
+	if imported {
+		t.Fatal("near duplicate imported, want skipped")
+	}
+	if _, err := cat.GetVideo(ctx, BuildVideoID("demo", "near-source")); err == nil {
+		t.Fatal("near duplicate should not be inserted into catalog")
+	}
+	if _, err := os.Stat(filepath.Join(drv.VideosDir(), "near-source.mp4")); !os.IsNotExist(err) {
+		t.Fatalf("near duplicate video stat = %v, want removed", err)
+	}
+	if sourceThumb, err := drv.ThumbPath("near-source.jpg"); err != nil {
+		t.Fatalf("source thumb path: %v", err)
+	} else if _, err := os.Stat(sourceThumb); !os.IsNotExist(err) {
+		t.Fatalf("source thumb stat = %v, want removed", err)
+	}
+	if _, err := os.Stat(mediaasset.ThumbnailPathInDir(commonThumbDir, BuildVideoID("demo", "near-source"))); !os.IsNotExist(err) {
+		t.Fatalf("common thumb stat = %v, want removed", err)
+	}
+	seen, err := cat.ListCrawlerSourceIDs(ctx, Kind, "demo")
+	if err != nil {
+		t.Fatalf("list seen source ids: %v", err)
+	}
+	if !hasString(seen, "near-source") {
+		t.Fatalf("seen ids = %#v, want near-source", seen)
+	}
+}
+
+func TestCrawlerProcessItemKeepsLargerNearDuplicate(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	cat, err := catalog.Open(filepath.Join(tmp, "catalog.db"))
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	drv := New(Config{ID: "demo", RootDir: filepath.Join(tmp, "crawler")})
+	if err := drv.Init(ctx); err != nil {
+		t.Fatalf("driver init: %v", err)
+	}
+	commonThumbDir := filepath.Join(tmp, "common-thumbs")
+	if err := os.MkdirAll(commonThumbDir, 0o755); err != nil {
+		t.Fatalf("mkdir common thumbs: %v", err)
+	}
+
+	now := time.Now()
+	smallerID := "smaller-canonical"
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:              smallerID,
+		DriveID:         "other-drive",
+		FileID:          "smaller.mp4",
+		FileName:        "smaller.mp4",
+		Title:           "91 Test Larger Candidate 1215516",
+		DurationSeconds: 257,
+		Size:            5,
+		Ext:             "mp4",
+		ThumbnailURL:    "/p/thumb/" + smallerID,
+		PublishedAt:     now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("seed smaller video: %v", err)
+	}
+	writeScriptCrawlerJPEG(t, mediaasset.ThumbnailPathInDir(commonThumbDir, smallerID), color.RGBA{R: 80, G: 160, B: 80, A: 255})
+
+	outputDir := drv.OutputDir()
+	mediaPath := filepath.Join(outputDir, "larger-video.mp4")
+	if err := os.WriteFile(mediaPath, []byte("near-duplicate-larger-candidate-bytes"), 0o644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	thumbPath := filepath.Join(outputDir, "larger-thumb.jpg")
+	writeScriptCrawlerJPEG(t, thumbPath, color.RGBA{R: 81, G: 161, B: 81, A: 255})
+
+	c := NewCrawler(CrawlerConfig{
+		Driver:         drv,
+		Catalog:        cat,
+		FFprobePath:    writeScriptCrawlerFFprobeStub(t, tmp, true),
+		CommonThumbDir: commonThumbDir,
+	})
+	imported, err := c.processItem(ctx, Item{
+		SourceID:        "larger-source",
+		Title:           "91 Test Larger Candidate 1215516 - source suffix",
+		Author:          "helper",
+		DurationSeconds: 257,
+		Media:           MediaRef{LocalFile: mediaPath},
+		Thumbnail:       MediaRef{LocalFile: thumbPath},
+	})
+	if err != nil {
+		t.Fatalf("process item: %v", err)
+	}
+	if !imported {
+		t.Fatal("larger near duplicate was skipped, want imported")
+	}
+	if _, err := cat.GetVideo(ctx, smallerID); err == nil {
+		t.Fatal("smaller near duplicate should be deleted from catalog")
+	}
+	if deleted, err := cat.IsVideoDeleted(ctx, smallerID); err != nil || !deleted {
+		t.Fatalf("smaller tombstone = %v, %v; want deleted tombstone", deleted, err)
+	}
+	larger, err := cat.GetVideo(ctx, BuildVideoID("demo", "larger-source"))
+	if err != nil {
+		t.Fatalf("larger video should be imported: %v", err)
+	}
+	if larger.Size <= 5 {
+		t.Fatalf("larger size = %d, want > 5", larger.Size)
+	}
+}
+
 func TestCrawlerRunOnceRejectsInvalidDownloadedVideo(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
@@ -653,6 +853,8 @@ func TestCrawlerRunOnceDownloadsHLSMediaURL(t *testing.T) {
 
 	t.Setenv("GO_WANT_SCRIPTCRAWLER_HELPER", "1")
 	t.Setenv("GO_WANT_SCRIPTCRAWLER_HLS", "1")
+	ffmpegArgsFile := filepath.Join(tmp, "ffmpeg-args.txt")
+	t.Setenv("GO_SCRIPTCRAWLER_FFMPEG_ARGS_FILE", ffmpegArgsFile)
 	c := NewCrawler(CrawlerConfig{
 		Driver:      drv,
 		Catalog:     cat,
@@ -682,6 +884,21 @@ func TestCrawlerRunOnceDownloadsHLSMediaURL(t *testing.T) {
 	}
 	if string(data) != "hls-video-bytes" {
 		t.Fatalf("hls output = %q", string(data))
+	}
+	argsData, err := os.ReadFile(ffmpegArgsFile)
+	if err != nil {
+		t.Fatalf("read ffmpeg args: %v", err)
+	}
+	argsText := "\n" + string(argsData) + "\n"
+	for _, want := range []string{
+		"\n-protocol_whitelist\nhttp,https,tcp,tls,crypto\n",
+		"\n-allowed_extensions\nALL\n",
+		"\n-allowed_segment_extensions\nALL\n",
+		"\n-extension_picky\n0\n",
+	} {
+		if !strings.Contains(argsText, want) {
+			t.Fatalf("ffmpeg args missing %q in:\n%s", strings.TrimSpace(want), string(argsData))
+		}
 	}
 }
 
@@ -804,6 +1021,10 @@ func runDryRunHelperProcess() {
 	}
 	body := string(bodyBytes)
 	switch {
+	case strings.Contains(body, "Early Stop Video"):
+		fmt.Fprintln(os.Stderr, "[log] first item ready")
+		fmt.Println(`{"type":"item","item":{"title":"Early Stop Video","media_url":"https://cdn.example.test/v.mp4","source_id":"early-stop"}}`)
+		time.Sleep(30 * time.Second)
 	case strings.Contains(body, "sleep 30"):
 		time.Sleep(30 * time.Second)
 	case strings.Contains(body, "plain text progress output"):

@@ -1,4 +1,4 @@
-export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage" | "plugin" | "spider91";
+export type Kind = "quark" | "p115" | "p123" | "pikpak" | "wopan" | "guangyapan" | "onedrive" | "googledrive" | "localstorage" | "plugin";
 
 export const kindAbbr: Record<string, string> = {
   quark: "Qk",
@@ -11,7 +11,6 @@ export const kindAbbr: Record<string, string> = {
   googledrive: "GD",
   localstorage: "Lo",
   plugin: "Pl",
-  spider91: "91",
 };
 
 export function driveKindAbbr(kind: string): string {
@@ -35,7 +34,6 @@ export const kindLabel: Record<string, string> = {
   googledrive: "Google Drive",
   localstorage: "本地存储",
   plugin: "Drive 插件",
-  spider91: "91 爬虫",
 };
 
 export type FormState = {
@@ -44,7 +42,6 @@ export type FormState = {
   name: string;
   rootId: string;
   creds: Record<string, string>;
-  spider91UploadDriveId: string;
 };
 
 export const emptyForm: FormState = {
@@ -53,7 +50,6 @@ export const emptyForm: FormState = {
   name: "",
   rootId: "",
   creds: {},
-  spider91UploadDriveId: "",
 };
 
 export const idleNightlyStatus = {
@@ -135,12 +131,11 @@ export function defaultRootId(kind: Kind): string {
   if (kind === "googledrive") return "root";
   if (kind === "localstorage") return "/";
   if (kind === "plugin") return "";
-  if (kind === "spider91") return "/";
   return "0";
 }
 
 export function usesRootDirectoryID(kind: Kind): boolean {
-  return kind !== "localstorage" && kind !== "spider91";
+  return kind !== "localstorage";
 }
 
 export function rootIdPlaceholder(kind: Kind): string {
@@ -173,8 +168,6 @@ export function credentialHelp(kind: Kind, isEdit: boolean): string {
       return `填写服务器可访问的本地目录绝对路径，例如 /mnt/videos。系统会扫描该目录及子目录中的视频文件和 .strm 文件；.strm 可指向 HTTP/HTTPS 直链或本地视频路径（指向目录外需开启下方开关）。Docker 部署时请填写容器内路径。${note}`;
     case "plugin":
       return `填写 HashiCorp go-plugin drive 可执行文件路径，或引用后端启动时从 plugins.drive_dirs 扫描注册的插件。插件实现 backend/pkg/driveplugin.Driver。${note}`;
-    case "spider91":
-      return "91Spider 不再支持通过网盘添加或编辑。请到后台爬虫管理页面添加爬虫脚本。";
     default:
       return "";
   }
@@ -328,15 +321,15 @@ export function credentialFields(kind: Kind, creds: Record<string, string> = {})
             { value: "false", label: "自建 Google OAuth 客户端" },
           ],
         },
-        {
-          key: "refresh_token",
-          label: "refresh_token",
-          placeholder: "OpenList Google Drive refresh_token",
-          multiline: true,
-          required: true,
-        },
         ...(googleDriveUsesOnlineAPI(creds)
-          ? []
+          ? [
+              {
+                key: "api_url_address",
+                label: "OpenList 在线 API URL",
+                placeholder: "默认：https://api.oplist.org/googleui/renewapi",
+                help: "留空时使用 OpenList 官方在线 API，填写后会使用自定义续期 API。",
+              },
+            ]
           : [
               {
                 key: "client_id",
@@ -353,6 +346,13 @@ export function credentialFields(kind: Kind, creds: Record<string, string> = {})
                 help: "Google Cloud Console 中同一个 OAuth 客户端的 Client Secret",
               },
             ]),
+        {
+          key: "refresh_token",
+          label: "refresh_token",
+          placeholder: "OpenList Google Drive refresh_token",
+          multiline: true,
+          required: true,
+        },
       ];
     case "localstorage":
       return [
@@ -408,15 +408,6 @@ export function credentialFields(kind: Kind, creds: Record<string, string> = {})
           placeholder: `{"endpoint":"https://storage.example","bucket":"videos"}`,
           multiline: true,
           help: "JSON 对象会合并到插件 Config.Params。",
-        },
-      ];
-    case "spider91":
-      return [
-        {
-          key: "proxy",
-          label: "代理地址（可选）",
-          placeholder: "http://127.0.0.1:7890",
-          help: "支持 http://、https://、socks5://、socks5h://代理",
         },
       ];
   }

@@ -64,14 +64,26 @@ test("detail player uses compact ArtPlayer settings panel on mobile", () => {
 });
 
 test("detail player exposes a non-persistent loop switch in ArtPlayer settings", () => {
-  assert.match(playerSource, /settings:\s*\[createLoopSetting\(\)\]/);
+  assert.match(playerSource, /settings:\s*createPlayerSettings\(subtitleTracks\)/);
+  assert.match(playerSource, /return \[createLoopSetting\(\),\s*createSubtitleSetting\(subtitles\)\]/);
   assert.match(playerSource, /function createLoopSetting\(\)/);
   assert.match(playerSource, /html:\s*"洗脑循环"/);
-  assert.match(playerSource, /tooltip:\s*"关"/);
-  assert.match(playerSource, /switch:\s*false/);
-  assert.match(playerSource, /video\.loop = false/);
+  assert.match(playerSource, /loop:\s*true/);
+  assert.match(playerSource, /tooltip:\s*DEFAULT_SETTINGS\.loop \? "开" : "关"/);
+  assert.match(playerSource, /switch:\s*DEFAULT_SETTINGS\.loop/);
+  assert.match(playerSource, /video\.loop = DEFAULT_SETTINGS\.loop/);
   assert.match(playerSource, /this\.video\.loop = next/);
   assert.match(playerSource, /item\.tooltip = next \? "开" : "关"/);
+});
+
+test("detail player always exposes subtitle selector with default off and no offset setting", () => {
+  assert.doesNotMatch(playerSource, /subtitleOffset/);
+  assert.match(playerSource, /function createSubtitleSetting\(subtitles: PlayerSubtitle\[\]\): PlayerSetting/);
+  assert.match(playerSource, /html:\s*"字幕"/);
+  assert.match(playerSource, /tooltip:\s*"关闭"/);
+  assert.match(playerSource, /\{\s*html:\s*"关闭",\s*value:\s*"off",\s*default:\s*true\s*\}/);
+  assert.match(playerSource, /default:\s*false/);
+  assert.doesNotMatch(playerSource, /option\.subtitle = subtitleOption/);
 });
 
 test("detail player limits ArtPlayer automatic reconnect attempts", () => {
@@ -161,18 +173,34 @@ test("detail player uses custom mobile gestures instead of ArtPlayer native gest
   assert.doesNotMatch(playerSource, /onGestureHud\(`音量 /);
   assert.doesNotMatch(playerSource, /onGestureHud\(`亮度 /);
   assert.match(playerSource, /fullscreen:\s*true/);
-  assert.match(playerSource, /fullscreenWeb:\s*!enableOrientationControl/);
+  assert.match(playerSource, /fullscreenWeb:\s*enableWebFullscreen/);
   assert.doesNotMatch(playerSource, /addTextTrack\("captions", "Playback rate"/);
   assert.doesNotMatch(playerSource, /new VTTCue\(/);
   assert.doesNotMatch(playerSource, /onGestureHud\(`\$\{FAST_RATE\}x`/);
   assert.match(playerSource, /addEventListener\("touchmove", handleTouchMove, \{ passive: false \}\)/);
 });
 
+test("detail player hides orientation control on iPhone without disabling mobile gestures", () => {
+  assert.match(playerSource, /controls:\s*enableOrientationControl \? \[createOrientationControl\(\)\] : \[\]/);
+  assert.match(playerSource, /function shouldEnableMobileOrientationControl\(\)\s*\{\s*return isMobilePlaybackDevice\(\) && !isApplePhoneDevice\(\);/);
+  assert.match(playerSource, /function isApplePhoneDevice\(\)\s*\{\s*return \/iPhone\|iPod\/i\.test\(navigator\.userAgent\);/);
+  assert.match(playerSource, /function shouldEnableMobileGestures\(\)\s*\{\s*return isMobilePlaybackDevice\(\);/);
+});
+
+test("detail player keeps only native fullscreen on Apple devices", () => {
+  assert.match(playerSource, /const enableWebFullscreen = shouldEnableWebFullscreen\(enableOrientationControl\)/);
+  assert.match(playerSource, /fullscreen:\s*true/);
+  assert.match(playerSource, /fullscreenWeb:\s*enableWebFullscreen/);
+  assert.match(playerSource, /function shouldEnableWebFullscreen\(enableOrientationControl: boolean\)\s*\{\s*return !enableOrientationControl && !isAppleDevice\(\);/);
+  assert.match(playerSource, /function isAppleDevice\(\)/);
+  assert.match(playerSource, /\/iPhone\|iPad\|iPod\|Macintosh\/i\.test\(navigator\.userAgent\)/);
+});
+
 test("detail player treats backend video routes as native mp4 sources", () => {
   assert.match(playerSource, /if \(isBackendNativeVideoRoute\(cleanPath\)\) return "mp4"/);
   assert.match(playerSource, /pathname\.startsWith\("\/p\/stream\/"\)/);
   assert.match(playerSource, /pathname\.startsWith\("\/p\/upload\/"\)/);
-  assert.match(playerSource, /pathname\.startsWith\("\/p\/spider91\/"\)/);
+  assert.doesNotMatch(playerSource, /\/p\/spider91\//);
   assert.doesNotMatch(playerSource, /crossOrigin/);
 });
 

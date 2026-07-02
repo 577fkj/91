@@ -3,7 +3,6 @@ import { ArrowLeft, ChevronDown } from "lucide-react";
 import { P123QRCodeLogin } from "./P123QRCodeLogin";
 import { WopanQRCodeLogin } from "./WopanQRCodeLogin";
 import { GuangYaPanQRCodeLogin } from "./GuangYaPanQRCodeLogin";
-import { Spider91UploadTargetField } from "./Spider91UploadTargetField";
 import {
   FormState,
   Kind,
@@ -12,7 +11,6 @@ import {
   usesRootDirectoryID,
   rootIdPlaceholder,
 } from "./constants";
-import * as api from "../api";
 
 type DriveOption = {
   kind: Kind;
@@ -38,7 +36,6 @@ export function DriveForm({
   form,
   onChange,
   isEdit,
-  uploadTargets,
   nameError,
   onNameBlur,
   onBack,
@@ -46,7 +43,6 @@ export function DriveForm({
   form: FormState;
   onChange: (f: FormState) => void;
   isEdit: boolean;
-  uploadTargets: api.AdminDrive[];
   nameError?: string;
   onNameBlur?: () => void;
   onBack?: () => void;
@@ -265,17 +261,6 @@ export function DriveForm({
               {f.help && <div className="admin-form__help">{f.help}</div>}
             </div>
           ))}
-        </div>
-      )}
-
-      {form.kind === "spider91" && (
-        <div className="admin-form__section">
-          <h3 className="admin-form__section-label">上传设置</h3>
-          <Spider91UploadTargetField
-            value={form.spider91UploadDriveId}
-            onChange={(v) => set("spider91UploadDriveId", v)}
-            uploadTargets={uploadTargets}
-          />
         </div>
       )}
     </div>

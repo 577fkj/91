@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { VideoPlayer } from "@/components/VideoPlayer";
 import { VideoActions } from "@/components/VideoActions";
@@ -10,16 +10,23 @@ import {
   deleteVideo,
   fetchTags,
   fetchVideoDetail,
+  fetchVideoSubtitles,
   recordView,
   updateVideoTags,
 } from "@/data/videos";
-import type { TagItem, VideoDetail } from "@/types";
+import { useAuth } from "@/admin/AuthContext";
+import { resolveVideoReturnPath } from "@/lib/videoReturnPath";
+import type { TagItem, VideoDetail, VideoSubtitle } from "@/types";
 
 export default function VideoDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { isAdmin } = useAuth();
+  const locationState = location.state as { from?: unknown } | null;
   const [detail, setDetail] = useState<VideoDetail | null>(null);
   const [tags, setTags] = useState<TagItem[]>([]);
+  const [subtitles, setSubtitles] = useState<VideoSubtitle[]>([]);
   const [loading, setLoading] = useState(true);
   const [tagSaving, setTagSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -33,13 +40,17 @@ export default function VideoDetailPage() {
     let active = true;
     window.scrollTo({ top: 0, behavior: "auto" });
     setLoading(true);
-    Promise.all([fetchVideoDetail(id), fetchTags()]).then(([d, tagList]) => {
-      if (!active) return;
-      setDetail(d);
-      setTags(tagList);
-      setLoading(false);
-      document.title = d ? `${d.title} · 91` : "视频不存在";
-    });
+    setSubtitles([]);
+    Promise.all([fetchVideoDetail(id), fetchTags(), fetchVideoSubtitles(id)]).then(
+      ([d, tagList, subtitleList]) => {
+        if (!active) return;
+        setDetail(d);
+        setTags(tagList);
+        setSubtitles(d ? subtitleList : []);
+        setLoading(false);
+        document.title = d ? `${d.title} · 91` : "视频不存在";
+      }
+    );
     return () => {
       active = false;
     };
@@ -67,7 +78,7 @@ export default function VideoDetailPage() {
   }
 
   function handleOpenDelete() {
-    if (!detail || deleteSaving) return;
+    if (!isAdmin || !detail || deleteSaving) return;
     setDeleteSource(false);
     setDeleteError("");
     setDeleteOpen(true);
@@ -85,7 +96,8 @@ export default function VideoDetailPage() {
     setDeleteError("");
     try {
       await deleteVideo(detail.id, { deleteSource });
-      navigate("/list", { replace: true });
+      const from = typeof locationState?.from === "string" ? locationState.from : null;
+      navigate(resolveVideoReturnPath(from), { replace: true });
     } catch {
       setDeleteError(
         deleteSource
@@ -207,6 +219,7 @@ export default function VideoDetailPage() {
                     src={detail.videoSrc}
                     poster={detail.poster}
                     previewSrc={detail.previewSrc}
+                    subtitles={subtitles}
                     title={detail.title}
                     onFirstPlay={handleFirstPlay}
                   />
@@ -220,6 +233,7 @@ export default function VideoDetailPage() {
                   video={detail}
                   onDeleteVideo={handleOpenDelete}
                   deleteSaving={deleteSaving}
+                  canDelete={isAdmin}
                 />
               </section>
 
@@ -227,7 +241,7 @@ export default function VideoDetailPage() {
                 video={detail}
                 availableTags={tags}
                 tagSaving={tagSaving}
-                onTagsChange={handleTagsChange}
+                onTagsChange={isAdmin ? handleTagsChange : undefined}
               />
             </div>
 
@@ -236,7 +250,7 @@ export default function VideoDetailPage() {
         </div>
       </div>
 
-      {deleteOpen && (
+      {deleteOpen && isAdmin && (
         <div className="vd-delete-modal" role="presentation">
           <div
             className="vd-delete-dialog"

@@ -2,9 +2,14 @@
 
 package scriptcrawler
 
-import "os/exec"
+import (
+	"os/exec"
+	"syscall"
+)
 
-func prepareDryRunCommand(cmd *exec.Cmd) {}
+func setDryRunProcAttr(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
+}
 
 func killDryRunProcess(cmd *exec.Cmd) error {
 	if cmd == nil || cmd.Process == nil {

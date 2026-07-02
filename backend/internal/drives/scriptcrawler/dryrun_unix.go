@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-func prepareDryRunCommand(cmd *exec.Cmd) {
+func setDryRunProcAttr(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 

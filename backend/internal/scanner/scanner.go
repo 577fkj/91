@@ -209,12 +209,6 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if label, ok, err := s.Catalog.EnsureCollectionTag(ctx, dirName); err == nil && ok {
-			tags = mergeTags(tags, []string{label})
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 
 		existing, _ := s.Catalog.GetVideo(ctx, id)
 		if err := ctx.Err(); err != nil {
@@ -226,19 +220,20 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 				patch.ContentHash = e.Hash
 				existing.ContentHash = e.Hash
 			}
-			if e.Name != "" && existing.FileName == "" {
+			if e.Name != "" && existing.FileName != e.Name {
 				patch.FileName = e.Name
 				existing.FileName = e.Name
+				patch.Title = parsed.Title
+				patch.TitleSet = true
+				patch.Author = parsed.Author
+				patch.AuthorSet = true
 			}
 			if shouldUpdateScannedTitle(existing.Title, fallbackTitle, parsed.Title, driveTitle != "") {
 				patch.Title = parsed.Title
+				patch.TitleSet = true
 				existing.Title = parsed.Title
 			}
-			// 已存在但轻量元数据空缺时，顺便补齐。
-			if existing.Category == "" && dirName != "" {
-				patch.Category = dirName
-			}
-			if patch.Category != "" || patch.ContentHash != "" || patch.FileName != "" || patch.Title != "" {
+			if patch.ContentHash != "" || patch.FileName != "" || patch.TitleSet || patch.AuthorSet {
 				_ = s.Catalog.UpdateVideoMeta(ctx, id, patch)
 				if err := ctx.Err(); err != nil {
 					return err
@@ -281,7 +276,6 @@ func (s *Scanner) walk(ctx context.Context, dirID, dirName string, stats *Stats,
 			Quality:       "HD",
 			Size:          e.Size,
 			PreviewStatus: "pending",
-			Category:      dirName,
 			PublishedAt:   now,
 			CreatedAt:     now,
 			UpdatedAt:     now,

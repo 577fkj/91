@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/video-site/backend/internal/auth"
 	"github.com/video-site/backend/internal/catalog"
 	"github.com/video-site/backend/internal/drives"
 	"github.com/video-site/backend/internal/mediaasset"
@@ -130,6 +131,131 @@ func TestHandleStreamDecodesEscapedWildcardFileID(t *testing.T) {
 	}
 }
 
+func TestHandleVideoSubtitlesUsesProvider(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	now := time.Now()
+	const contentHash = "0123456789abcdef0123456789abcdef01234567"
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:              "video-1",
+		DriveID:         "drive-1",
+		FileID:          "file-1",
+		FileName:        "movie.mp4",
+		ContentHash:     contentHash,
+		Title:           "Movie",
+		DurationSeconds: 257,
+		PublishedAt:     now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	drv := &apiStreamFakeDrive{subtitles: []drives.Subtitle{
+		{Name: "简体中文", Ext: "srt", Language: "zh-CN", URL: "https://subtitle.example/movie.srt", SourceLabel: "inner"},
+		{Name: "繁体中文", Ext: "ssa", Language: "zh-TW", URL: "https://subtitle.example/movie.ssa", SourceLabel: "online"},
+		{Name: "PGS", Ext: "sup", Language: "ja", URL: "https://subtitle.example/movie.sup", SourceLabel: "online"},
+		{Name: "empty-url", Ext: "srt", Language: "en", SourceLabel: "online"},
+	}}
+	reg := proxy.NewRegistry()
+	reg.Set("drive-1", drv)
+	srv := &Server{Catalog: cat, Proxy: proxy.New(reg)}
+
+	router := chi.NewRouter()
+	router.Get("/api/video/{id}/subtitles", srv.handleVideoSubtitles)
+	req := httptest.NewRequest(http.MethodGet, "/api/video/video-1/subtitles", nil)
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if drv.subtitleReq.FileID != "file-1" || drv.subtitleReq.FileName != "movie.mp4" || drv.subtitleReq.ContentHash != contentHash || drv.subtitleReq.DurationSeconds != 257 {
+		t.Fatalf("subtitle request = %#v, want catalog metadata", drv.subtitleReq)
+	}
+	var got []SubtitleDTO
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode subtitles: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("subtitles = %#v, want only supported text subtitles", got)
+	}
+	if got[0].URL != "/p/subtitle/video-1/0" || got[0].Type != "srt" || got[0].Ext != "srt" || got[0].Label != "zh-CN · 简体中文 · SRT" {
+		t.Fatalf("first subtitle dto = %#v", got[0])
+	}
+	if got[1].URL != "/p/subtitle/video-1/1" || got[1].Type != "ass" || got[1].Ext != "ssa" || got[1].Label != "zh-TW · 繁体中文 · SSA" {
+		t.Fatalf("second subtitle dto = %#v", got[1])
+	}
+}
+
+func TestHandleSubtitleFileProxiesSelectedSubtitle(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	now := time.Now()
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:          "video-1",
+		DriveID:     "drive-1",
+		FileID:      "file-1",
+		FileName:    "movie.mp4",
+		Title:       "Movie",
+		PublishedAt: now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/movie.srt" {
+			t.Fatalf("unexpected upstream path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("1\n00:00:00,000 --> 00:00:01,000\nhello\n"))
+	}))
+	defer upstream.Close()
+
+	drv := &apiStreamFakeDrive{subtitles: []drives.Subtitle{
+		{Name: "简体中文", Ext: "srt", Language: "zh-CN", URL: upstream.URL + "/movie.srt", SourceLabel: "inner"},
+	}}
+	reg := proxy.NewRegistry()
+	reg.Set("drive-1", drv)
+	srv := &Server{Catalog: cat, Proxy: proxy.New(reg)}
+
+	router := chi.NewRouter()
+	router.Get("/p/subtitle/{id}/{index}", srv.handleSubtitleFile)
+	req := httptest.NewRequest(http.MethodGet, "/p/subtitle/video-1/0", nil)
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("content-type = %q, want text/plain", got)
+	}
+	if got := rr.Body.String(); got != "1\n00:00:00,000 --> 00:00:01,000\nhello\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
 func TestVideoSourceUsesLocalUploadRoute(t *testing.T) {
 	v := &catalog.Video{
 		ID:      "video-1",
@@ -161,6 +287,42 @@ func TestPreviewURLFallsBackWithoutUpdatedAt(t *testing.T) {
 
 	if got != "/p/preview/video-1" {
 		t.Fatalf("preview URL = %q, want unversioned URL", got)
+	}
+}
+
+func TestPublicWriteRoutesRequireAdminRole(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	hash, err := auth.HashPassword("secret123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	userID, err := cat.CreateUser(ctx, "viewer", hash, "user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := cat.CreateSession(ctx, "viewer-token", time.Hour, userID); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	router := chi.NewRouter()
+	(&Server{Catalog: cat}).RegisterRoutes(router, &auth.Authenticator{Catalog: cat})
+	req := httptest.NewRequest(http.MethodPut, "/api/video/video-1/tags", strings.NewReader(`{"tags":[]}`))
+	req.AddCookie(&http.Cookie{Name: "vs_admin", Value: "viewer-token"})
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -498,6 +660,68 @@ func TestHandleListLatestPrefersReadyThumbnails(t *testing.T) {
 	}
 }
 
+func TestHandleListIgnoresCategoryQueryAndDoesNotExposeCategory(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, v := range []*catalog.Video{
+		{
+			ID:          "video-a",
+			DriveID:     "drive",
+			FileID:      "file-a",
+			Title:       "A",
+			PublishedAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "video-b",
+			DriveID:     "drive",
+			FileID:      "file-b",
+			Title:       "B",
+			PublishedAt: now.Add(-time.Hour),
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		},
+	} {
+		if err := cat.UpsertVideo(ctx, v); err != nil {
+			t.Fatalf("seed video %s: %v", v.ID, err)
+		}
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/list?page=1&size=24&cat=alpha", nil)
+	(&Server{Catalog: cat}).handleList(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Total != 2 || len(got.Items) != 2 {
+		t.Fatalf("response total/items = %d/%d, want 2/2", got.Total, len(got.Items))
+	}
+	for _, item := range got.Items {
+		if _, ok := item["category"]; ok {
+			t.Fatalf("list response exposed category: %#v", item)
+		}
+	}
+}
+
 func TestHandleUploadVideoSavesFileVideoTagsAndQueuesPreview(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
@@ -763,7 +987,6 @@ func TestHandleTagsReturnsUnifiedTagPool(t *testing.T) {
 		FileID:      "file-1",
 		Title:       "清纯女大后入",
 		Tags:        []string{"后入", "女大"},
-		Category:    "random-category",
 		PublishedAt: now,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -1259,8 +1482,11 @@ func sameStringSet(a, b []string) bool {
 }
 
 type apiStreamFakeDrive struct {
-	localPath string
-	fileID    string
+	localPath   string
+	fileID      string
+	subtitles   []drives.Subtitle
+	subtitleReq drives.SubtitleRequest
+	subtitleErr error
 }
 
 func (d *apiStreamFakeDrive) Kind() string { return "fake" }
@@ -1288,6 +1514,13 @@ func (d *apiStreamFakeDrive) EnsureDir(context.Context, string) (string, error) 
 	return "", drives.ErrNotSupported
 }
 func (d *apiStreamFakeDrive) RootID() string { return "root" }
+func (d *apiStreamFakeDrive) Subtitles(_ context.Context, req drives.SubtitleRequest) ([]drives.Subtitle, error) {
+	d.subtitleReq = req
+	if d.subtitleErr != nil {
+		return nil, d.subtitleErr
+	}
+	return d.subtitles, nil
+}
 
 func requestWithVideoID(method, target, videoID string, body *strings.Reader) *http.Request {
 	return requestWithRouteParam(method, target, "id", videoID, body)

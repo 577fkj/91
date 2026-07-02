@@ -27,6 +27,7 @@ type Driver struct {
 	refreshToken  string
 	client        *sdk.WoClient
 	onTokenUpdate func(access, refresh string)
+	uploadTempDir string
 
 	listMu       sync.Mutex
 	lastListAt   time.Time
@@ -38,11 +39,12 @@ type Driver struct {
 }
 
 type Config struct {
-	ID           string
-	AccessToken  string
-	RefreshToken string
-	FamilyID     string // 空则走个人空间，有值则走家庭空间
-	RootID       string // 根目录 ID，默认 "0"
+	ID            string
+	AccessToken   string
+	RefreshToken  string
+	FamilyID      string // 空则走个人空间，有值则走家庭空间
+	RootID        string // 根目录 ID，默认 "0"
+	UploadTempDir string
 	// 当 SDK 刷新 token 时回调，便于持久化
 	OnTokenUpdate func(access, refresh string)
 }
@@ -59,6 +61,7 @@ func New(c Config) *Driver {
 		accessToken:   c.AccessToken,
 		refreshToken:  c.RefreshToken,
 		onTokenUpdate: c.OnTokenUpdate,
+		uploadTempDir: strings.TrimSpace(c.UploadTempDir),
 		listInterval:  800 * time.Millisecond,
 		listCooldown:  5 * time.Minute,
 		fidToID:       make(map[string]string),
@@ -162,7 +165,12 @@ func (d *Driver) StreamURL(ctx context.Context, fileID string) (*drives.StreamLi
 
 func (d *Driver) Upload(ctx context.Context, parentID, name string, r io.Reader, size int64) (string, error) {
 	// wopan SDK 要求 *os.File，先把流落到临时文件再上传
-	tmp, err := os.CreateTemp("", "wopan-upload-*.tmp")
+	if d.uploadTempDir != "" {
+		if err := os.MkdirAll(d.uploadTempDir, 0o755); err != nil {
+			return "", fmt.Errorf("wopan upload: create tmp dir: %w", err)
+		}
+	}
+	tmp, err := os.CreateTemp(d.uploadTempDir, "wopan-upload-*.tmp")
 	if err != nil {
 		return "", err
 	}

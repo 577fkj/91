@@ -116,9 +116,85 @@ func TestHandleSetupStoresCredentialsAndCreatesSession(t *testing.T) {
 	if len(cookies) == 0 {
 		t.Fatal("setup did not set a session cookie")
 	}
-	ok, err := cat.ValidateSession(context.Background(), cookies[0].Value)
+	ok, _, err := cat.ValidateSession(context.Background(), cookies[0].Value)
 	if err != nil || !ok {
 		t.Fatalf("setup session valid=%v err=%v", ok, err)
+	}
+}
+
+func TestHandleBanUserDeletesSessions(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	hash, err := auth.HashPassword("secret123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	userID, err := cat.CreateUser(ctx, "viewer", hash, "user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := cat.CreateSession(ctx, "viewer-token", time.Hour, userID); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/1/ban", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(userID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+
+	(&AdminServer{Catalog: cat}).handleBanUser(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rr.Code, rr.Body.String())
+	}
+	ok, _, err := cat.ValidateSession(ctx, "viewer-token")
+	if err != nil {
+		t.Fatalf("validate session: %v", err)
+	}
+	if ok {
+		t.Fatal("banned user session is still valid")
+	}
+}
+
+func TestHandleBanUserRejectsLastActiveAdmin(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+	hash, err := auth.HashPassword("secret123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	adminID, err := cat.CreateUser(ctx, "owner", hash, "admin")
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/api/users/1/ban", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(adminID, 10))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+
+	(&AdminServer{Catalog: cat}).handleBanUser(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -732,9 +808,34 @@ func TestHandleUpsertGoogleDriveMergesOAuthCredentials(t *testing.T) {
 	if got.Credentials["client_id"] != "google-client-id" || got.Credentials["client_secret"] != "google-client-secret" {
 		t.Fatalf("oauth client credentials = %#v, want saved", got.Credentials)
 	}
+	if got.Credentials["api_url_address"] != "https://api.oplist.org/googleui/renewapi" {
+		t.Fatalf("api_url_address = %q, want preserved", got.Credentials["api_url_address"])
+	}
+
+	clearReq := httptest.NewRequest(http.MethodPost, "/admin/api/drives", bytes.NewBufferString(`{
+		"id": "google-main",
+		"kind": "googledrive",
+		"name": "Google Drive",
+		"rootId": "root",
+		"credentials": {
+			"api_url_address": ""
+		}
+	}`))
+	clearRR := httptest.NewRecorder()
+	(&AdminServer{Catalog: cat}).handleUpsertDrive(clearRR, clearReq)
+	if clearRR.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, body = %s", clearRR.Code, clearRR.Body.String())
+	}
+	cleared, err := cat.GetDrive(ctx, "google-main")
+	if err != nil {
+		t.Fatalf("get cleared drive: %v", err)
+	}
+	if _, ok := cleared.Credentials["api_url_address"]; ok {
+		t.Fatalf("api_url_address was not cleared: %#v", cleared.Credentials)
+	}
 }
 
-func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
+func TestHandleUpsertUnknownDriveKindIsRejected(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
 	if err != nil {
@@ -747,14 +848,12 @@ func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
 	})
 
 	if err := cat.UpsertDrive(ctx, &catalog.Drive{
-		ID:     "spider91-main",
-		Kind:   "spider91",
-		Name:   "91 Spider",
+		ID:     "unknown-main",
+		Kind:   "unknown",
+		Name:   "Unknown",
 		RootID: "/",
 		Credentials: map[string]string{
-			"last_crawl_at": "1800000000",
-			"proxy":         "http://old-proxy.local:7890",
-			"script_path":   "/opt/video-site-91/91VideoSpider/spider_91porn.py",
+			"token": "old-token",
 		},
 		Status: "ok",
 	}); err != nil {
@@ -762,33 +861,27 @@ func TestHandleUpsertSpider91DriveIsRejected(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/drives", strings.NewReader(`{
-		"id": "spider91-main",
-		"kind": "spider91",
-		"name": "91 Spider",
+		"id": "unknown-main",
+		"kind": "unknown",
+		"name": "Unknown",
 		"rootId": "/",
-		"credentials": {"proxy": " socks5h://proxy-user:proxy-pass@127.0.0.1:7891 "}
+		"credentials": {"token": "new-token"}
 	}`))
 	rr := httptest.NewRecorder()
 	(&AdminServer{Catalog: cat}).handleUpsertDrive(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "爬虫管理") {
-		t.Fatalf("body = %q, want crawler management guidance", rr.Body.String())
+	if rr.Body.String() != "unsupported drive kind\n" {
+		t.Fatalf("body = %q, want unsupported kind", rr.Body.String())
 	}
 
-	got, err := cat.GetDrive(ctx, "spider91-main")
+	got, err := cat.GetDrive(ctx, "unknown-main")
 	if err != nil {
 		t.Fatalf("get drive: %v", err)
 	}
-	if got.Credentials["proxy"] != "http://old-proxy.local:7890" {
-		t.Fatalf("proxy = %q, want unchanged old proxy", got.Credentials["proxy"])
-	}
-	if got.Credentials["last_crawl_at"] != "1800000000" {
-		t.Fatalf("last_crawl_at = %q, want preserved", got.Credentials["last_crawl_at"])
-	}
-	if got.Credentials["script_path"] == "" {
-		t.Fatalf("script_path should be preserved")
+	if got.Credentials["token"] != "old-token" {
+		t.Fatalf("token = %q, want unchanged old token", got.Credentials["token"])
 	}
 }
 
@@ -914,31 +1007,18 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 			t.Fatalf("close catalog: %v", err)
 		}
 	})
-	scriptPath := filepath.Join(tmp, "spider_91porn.py")
-	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"91Porn\"\n"), 0o644); err != nil {
+	scriptPath := filepath.Join(tmp, "demo_crawler.py")
+	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"Demo Crawler\"\n"), 0o644); err != nil {
 		t.Fatalf("write crawler script: %v", err)
 	}
 
 	for _, d := range []*catalog.Drive{
 		{
-			ID:     "spider91-main",
-			Kind:   "spider91",
-			Name:   "91 Spider",
-			RootID: "/",
-			Credentials: map[string]string{
-				"last_crawl_at": "1800000000",
-				"proxy":         " http://127.0.0.1:7890 ",
-				"script_path":   scriptPath,
-			},
-			Status: "ok",
-		},
-		{
-			ID:     "crawler-spider91",
+			ID:     "crawler-main",
 			Kind:   "scriptcrawler",
-			Name:   "91 Spider",
+			Name:   "Crawler",
 			RootID: "/",
 			Credentials: map[string]string{
-				"builtin":         "spider91",
 				"last_crawl_at":   "1800000000",
 				"proxy":           " http://127.0.0.1:7890 ",
 				"script_path":     scriptPath,
@@ -980,27 +1060,27 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	}
 	for _, v := range []*catalog.Video{
 		{
-			ID:              "spider91-crawler-spider91-local",
-			DriveID:         "crawler-spider91",
+			ID:              "scriptcrawler-crawler-main-local",
+			DriveID:         "crawler-main",
 			FileID:          "local.mp4",
 			FileName:        "local.mp4",
 			Title:           "Local",
 			Size:            123,
 			Ext:             "mp4",
-			ThumbnailURL:    "/p/thumb/spider91-crawler-spider91-local",
+			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-main-local",
 			PreviewStatus:   "ready",
 			DurationSeconds: 12,
 			PublishedAt:     time.Now(),
 		},
 		{
-			ID:              "scriptcrawler-crawler-spider91-migrated",
+			ID:              "scriptcrawler-crawler-main-migrated",
 			DriveID:         "p115-target",
 			FileID:          "uploaded-id",
 			FileName:        "migrated.mp4",
 			Title:           "Migrated",
 			Size:            456,
 			Ext:             "mp4",
-			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-spider91-migrated",
+			ThumbnailURL:    "/p/thumb/scriptcrawler-crawler-main-migrated",
 			PreviewStatus:   "ready",
 			DurationSeconds: 34,
 			PublishedAt:     time.Now(),
@@ -1071,35 +1151,32 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 			FingerprintReady: d.FingerprintReady,
 		}
 	}
-	if _, ok := byID["spider91-main"]; ok {
-		t.Fatal("legacy spider91 drive should not be returned by crawler list")
-	}
 	if _, ok := byID["crawler-script-deleted"]; ok {
 		t.Fatal("crawler without script_path should not be returned by crawler list")
 	}
-	if byID["crawler-spider91"].Kind != "scriptcrawler" {
-		t.Fatalf("crawler kind = %q, want scriptcrawler", byID["crawler-spider91"].Kind)
+	if byID["crawler-main"].Kind != "scriptcrawler" {
+		t.Fatalf("crawler kind = %q, want scriptcrawler", byID["crawler-main"].Kind)
 	}
-	if byID["crawler-spider91"].Name != "91Porn" {
-		t.Fatalf("crawler name = %q, want script metadata name", byID["crawler-spider91"].Name)
+	if byID["crawler-main"].Name != "Demo Crawler" {
+		t.Fatalf("crawler name = %q, want script metadata name", byID["crawler-main"].Name)
 	}
-	if byID["crawler-spider91"].Proxy != "http://127.0.0.1:7890" {
-		t.Fatalf("crawler proxy = %q, want trimmed proxy", byID["crawler-spider91"].Proxy)
+	if byID["crawler-main"].Proxy != "http://127.0.0.1:7890" {
+		t.Fatalf("crawler proxy = %q, want trimmed proxy", byID["crawler-main"].Proxy)
 	}
-	if byID["crawler-spider91"].UploadDriveID != "p115-target" {
-		t.Fatalf("uploadDriveId = %q, want p115-target", byID["crawler-spider91"].UploadDriveID)
+	if byID["crawler-main"].UploadDriveID != "p115-target" {
+		t.Fatalf("uploadDriveId = %q, want p115-target", byID["crawler-main"].UploadDriveID)
 	}
-	if byID["crawler-spider91"].TeaserEnabled {
+	if byID["crawler-main"].TeaserEnabled {
 		t.Fatal("teaserEnabled = true, want false from crawler drive")
 	}
-	if byID["crawler-spider91"].LastCrawlAt != 1800000000 {
-		t.Fatalf("lastCrawlAt = %d, want 1800000000", byID["crawler-spider91"].LastCrawlAt)
+	if byID["crawler-main"].LastCrawlAt != 1800000000 {
+		t.Fatalf("lastCrawlAt = %d, want 1800000000", byID["crawler-main"].LastCrawlAt)
 	}
-	if byID["crawler-spider91"].TotalCrawled != 2 || byID["crawler-spider91"].LocalVideos != 1 || byID["crawler-spider91"].MigratedVideo != 1 {
-		t.Fatalf("crawler counts = total %d local %d migrated %d, want 2/1/1", byID["crawler-spider91"].TotalCrawled, byID["crawler-spider91"].LocalVideos, byID["crawler-spider91"].MigratedVideo)
+	if byID["crawler-main"].TotalCrawled != 2 || byID["crawler-main"].LocalVideos != 1 || byID["crawler-main"].MigratedVideo != 1 {
+		t.Fatalf("crawler counts = total %d local %d migrated %d, want 2/1/1", byID["crawler-main"].TotalCrawled, byID["crawler-main"].LocalVideos, byID["crawler-main"].MigratedVideo)
 	}
-	if byID["crawler-spider91"].ThumbnailReady != 2 || byID["crawler-spider91"].TeaserReady != 2 || byID["crawler-spider91"].FingerprintReady != 2 {
-		t.Fatalf("asset ready counts = thumb %d teaser %d fingerprint %d, want 2/2/2", byID["crawler-spider91"].ThumbnailReady, byID["crawler-spider91"].TeaserReady, byID["crawler-spider91"].FingerprintReady)
+	if byID["crawler-main"].ThumbnailReady != 2 || byID["crawler-main"].TeaserReady != 2 || byID["crawler-main"].FingerprintReady != 2 {
+		t.Fatalf("asset ready counts = thumb %d teaser %d fingerprint %d, want 2/2/2", byID["crawler-main"].ThumbnailReady, byID["crawler-main"].TeaserReady, byID["crawler-main"].FingerprintReady)
 	}
 	if _, ok := byID["onedrive-main"]; ok {
 		t.Fatal("onedrive should not be returned by crawler list")
@@ -1121,10 +1198,7 @@ func TestHandleListCrawlersOnlyIncludesCrawlerPageScripts(t *testing.T) {
 	for _, d := range drives {
 		driveIDs[d.ID] = true
 	}
-	if !driveIDs["spider91-main"] {
-		t.Fatal("legacy spider91 drive should remain visible in drive list for deletion")
-	}
-	if driveIDs["crawler-spider91"] {
+	if driveIDs["crawler-main"] {
 		t.Fatal("scriptcrawler should not be returned by drive list")
 	}
 }
@@ -1144,15 +1218,15 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 
 	srv := &AdminServer{Catalog: cat}
 	scriptPath := filepath.Join(tmp, "custom.py")
-	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"91 Spider\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(scriptPath, []byte("CRAWLER_NAME = \"Demo Crawler\"\n"), 0o644); err != nil {
 		t.Fatalf("write crawler script: %v", err)
 	}
 
 	// 不再内置任何爬虫：没有脚本路径的保存请求必须被拒绝，
 	// 旧的 builtin 字段也不再有"免脚本"特权。
 	req := httptest.NewRequest(http.MethodPost, "/admin/api/crawlers", strings.NewReader(`{
-		"id": "spider91-main",
-		"builtin": "spider91",
+		"id": "crawler-main",
+		"builtin": "legacy",
 		"scriptPath": "",
 		"targetNew": "15"
 	}`))
@@ -1164,8 +1238,8 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 
 	// 带脚本路径时正常保存，且请求中的 builtin 字段被忽略，不会写入凭证。
 	body, err := json.Marshal(map[string]any{
-		"id":            "spider91-main",
-		"builtin":       "spider91",
+		"id":            "crawler-main",
+		"builtin":       "legacy",
 		"scriptPath":    scriptPath,
 		"targetNew":     "15",
 		"teaserEnabled": false,
@@ -1180,7 +1254,7 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 
-	got, err := cat.GetDrive(ctx, "spider91-main")
+	got, err := cat.GetDrive(ctx, "crawler-main")
 	if err != nil {
 		t.Fatalf("get crawler drive: %v", err)
 	}
@@ -1190,7 +1264,7 @@ func TestHandleUpsertCrawlerRequiresScriptPath(t *testing.T) {
 	if got.Credentials["python_path"] != "" || got.Credentials["config_json"] != "" {
 		t.Fatalf("legacy hidden credentials should not be saved: %+v", got.Credentials)
 	}
-	if got.Name != "91 Spider" {
+	if got.Name != "Demo Crawler" {
 		t.Fatalf("name = %q, want script metadata name", got.Name)
 	}
 	if got.Credentials["script_path"] != scriptPath {
@@ -1279,6 +1353,7 @@ func TestHandleUpsertCrawlerPersistsAndValidatesUploadDrive(t *testing.T) {
 	for _, d := range []*catalog.Drive{
 		{ID: "p115-target", Kind: "p115", Name: "115", RootID: "0", Credentials: map[string]string{"cookie": "x"}},
 		{ID: "wopan-target", Kind: "wopan", Name: "沃盘", RootID: "0", Credentials: map[string]string{"access_token": "a", "refresh_token": "r"}},
+		{ID: "guangyapan-target", Kind: "guangyapan", Name: "光鸭", RootID: "", Credentials: map[string]string{"access_token": "a", "refresh_token": "r"}},
 		{ID: "local-target", Kind: "localstorage", Name: "Local", RootID: "/", Credentials: map[string]string{"path": tmp}},
 	} {
 		if err := cat.UpsertDrive(ctx, d); err != nil {
@@ -1350,6 +1425,28 @@ func TestHandleUpsertCrawlerPersistsAndValidatesUploadDrive(t *testing.T) {
 	}
 	if teaserCallbackID != "" {
 		t.Fatalf("teaser callback after preserved edit = %q, want none", teaserCallbackID)
+	}
+
+	body, err = json.Marshal(map[string]string{
+		"id":            "crawler-upload",
+		"scriptPath":    scriptPath,
+		"uploadDriveId": "guangyapan-target",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/admin/api/crawlers", bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	srv.handleUpsertCrawler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guangyapan target status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	got, err = cat.GetDrive(ctx, "crawler-upload")
+	if err != nil {
+		t.Fatalf("get crawler after guangyapan target: %v", err)
+	}
+	if got.Credentials["upload_drive_id"] != "guangyapan-target" {
+		t.Fatalf("upload_drive_id = %q, want guangyapan-target", got.Credentials["upload_drive_id"])
 	}
 
 	body, err = json.Marshal(map[string]any{
@@ -1953,7 +2050,8 @@ func TestHandleListDrivesIncludesGoogleDriveOnlineAPIMode(t *testing.T) {
 			Name:   "Google Legacy",
 			RootID: "root",
 			Credentials: map[string]string{
-				"refresh_token": "legacy-refresh",
+				"refresh_token":   "legacy-refresh",
+				"api_url_address": "https://openlist-api.example/googleui/renewapi",
 			},
 			Status: "ok",
 		},
@@ -1984,21 +2082,27 @@ func TestHandleListDrivesIncludesGoogleDriveOnlineAPIMode(t *testing.T) {
 	}
 
 	var got []struct {
-		ID                      string `json:"id"`
-		GoogleDriveUseOnlineAPI bool   `json:"googleDriveUseOnlineAPI"`
+		ID                        string `json:"id"`
+		GoogleDriveUseOnlineAPI   bool   `json:"googleDriveUseOnlineAPI"`
+		GoogleDriveOpenListAPIURL string `json:"googleDriveOpenListApiUrl"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	byID := map[string]bool{}
+	byAPIURL := map[string]string{}
 	for _, d := range got {
 		byID[d.ID] = d.GoogleDriveUseOnlineAPI
+		byAPIURL[d.ID] = d.GoogleDriveOpenListAPIURL
 	}
 	if !byID["google-legacy"] {
 		t.Fatalf("legacy google drive use_online_api = false, want true")
 	}
 	if byID["google-oauth"] {
 		t.Fatalf("oauth google drive use_online_api = true, want false")
+	}
+	if byAPIURL["google-legacy"] != "https://openlist-api.example/googleui/renewapi" {
+		t.Fatalf("legacy google drive openlist api url = %q, want custom URL", byAPIURL["google-legacy"])
 	}
 }
 
@@ -2476,6 +2580,52 @@ func TestHandleAdminListVideosFiltersByDriveID(t *testing.T) {
 	}
 }
 
+func TestHandleAdminListVideosDoesNotExposeCategory(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	if err := cat.UpsertVideo(ctx, &catalog.Video{
+		ID:          "video-1",
+		DriveID:     "drive",
+		FileID:      "file-1",
+		Title:       "Video",
+		PublishedAt: now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/videos", nil)
+	rr := httptest.NewRecorder()
+	(&AdminServer{Catalog: cat}).handleAdminListVideos(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("items len = %d, want 1", len(got.Items))
+	}
+	if _, ok := got.Items[0]["category"]; ok {
+		t.Fatalf("admin video response exposed category: %#v", got.Items[0])
+	}
+}
+
 func TestHandleAdminListVideosPaginates(t *testing.T) {
 	ctx := context.Background()
 	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
@@ -2525,6 +2675,80 @@ func TestHandleAdminListVideosPaginates(t *testing.T) {
 	}
 	if len(got.Items) != 1 || got.Items[0].ID != "third" {
 		t.Fatalf("items = %#v, want only third", got.Items)
+	}
+}
+
+func TestHandleAdminListVideosMarksActivePreviewGeneration(t *testing.T) {
+	ctx := context.Background()
+	cat, err := catalog.Open(t.TempDir() + "/catalog.db")
+	if err != nil {
+		t.Fatalf("open catalog: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cat.Close(); err != nil {
+			t.Fatalf("close catalog: %v", err)
+		}
+	})
+
+	now := time.Now()
+	for _, v := range []*catalog.Video{
+		{
+			ID:            "active-video",
+			DriveID:       "OneDrive",
+			FileID:        "active-file",
+			Title:         "Active video",
+			PreviewStatus: "ready",
+			PublishedAt:   now,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+		{
+			ID:            "idle-video",
+			DriveID:       "OneDrive",
+			FileID:        "idle-file",
+			Title:         "Idle video",
+			PreviewStatus: "ready",
+			PublishedAt:   now.Add(-time.Hour),
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := cat.UpsertVideo(ctx, v); err != nil {
+			t.Fatalf("seed video %s: %v", v.ID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/api/videos?driveId=OneDrive", nil)
+	rr := httptest.NewRecorder()
+	(&AdminServer{
+		Catalog: cat,
+		GetPreviewGenerationVideoIDs: func() map[string]bool {
+			return map[string]bool{"active-video": true}
+		},
+	}).handleAdminListVideos(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Items []catalog.Video `json:"items"`
+		Total int             `json:"total"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Total != 2 || len(got.Items) != 2 {
+		t.Fatalf("response total/items = %d/%d, want 2/2", got.Total, len(got.Items))
+	}
+	statusByID := map[string]string{}
+	for _, item := range got.Items {
+		statusByID[item.ID] = item.PreviewStatus
+	}
+	if statusByID["active-video"] != "generating" {
+		t.Fatalf("active status = %q, want generating", statusByID["active-video"])
+	}
+	if statusByID["idle-video"] != "ready" {
+		t.Fatalf("idle status = %q, want ready", statusByID["idle-video"])
 	}
 }
 

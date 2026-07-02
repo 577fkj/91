@@ -47,6 +47,7 @@ type Driver struct {
 	client          *resty.Client
 	onTokenUpdate   func(access, refresh, captcha, deviceID string)
 	uploadToOSSFunc func(context.Context, *s3Params, io.Reader) error
+	uploadTempDir   string
 
 	// captchaMu serializes captcha-token refreshes triggered by 4002 / 9
 	// recovery in requestOnce. Without it, N concurrent callers all hitting
@@ -77,6 +78,7 @@ type Config struct {
 	DeviceID         string
 	RootID           string
 	DisableMediaLink bool
+	UploadTempDir    string
 	OnTokenUpdate    func(access, refresh, captcha, deviceID string)
 }
 
@@ -109,6 +111,7 @@ func New(c Config) *Driver {
 		deviceID:         deviceID,
 		disableMediaLink: c.DisableMediaLink,
 		onTokenUpdate:    c.OnTokenUpdate,
+		uploadTempDir:    strings.TrimSpace(c.UploadTempDir),
 		client: resty.New().
 			SetTimeout(30*time.Second).
 			SetHeader("Accept", "application/json, text/plain, */*"),

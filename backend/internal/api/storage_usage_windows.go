@@ -3,6 +3,7 @@
 package api
 
 import (
+	"path/filepath"
 	"syscall"
 	"unsafe"
 
@@ -12,6 +13,10 @@ import (
 var procGetDiskFreeSpaceExW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetDiskFreeSpaceExW")
 
 func localDiskStats(path string) (storageusage.DiskStats, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return storageusage.DiskStats{}, err
+	}
 	pathPtr, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return storageusage.DiskStats{}, err

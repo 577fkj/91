@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -86,7 +87,7 @@ func TestBufferAndHashSha1(t *testing.T) {
 	wantHex := strings.ToUpper(hex.EncodeToString(want[:]))
 
 	t.Run("declared size matches", func(t *testing.T) {
-		tmp, gotHex, n, err := bufferAndHashSha1(bytes.NewReader(body), int64(len(body)))
+		tmp, gotHex, n, err := bufferAndHashSha1("", bytes.NewReader(body), int64(len(body)))
 		if err != nil {
 			t.Fatalf("bufferAndHashSha1 returned error: %v", err)
 		}
@@ -111,14 +112,14 @@ func TestBufferAndHashSha1(t *testing.T) {
 	})
 
 	t.Run("declared size mismatch returns error", func(t *testing.T) {
-		_, _, _, err := bufferAndHashSha1(bytes.NewReader(body), int64(len(body))+1)
+		_, _, _, err := bufferAndHashSha1("", bytes.NewReader(body), int64(len(body))+1)
 		if err == nil {
 			t.Fatal("expected size mismatch error, got nil")
 		}
 	})
 
 	t.Run("declared size zero is unchecked", func(t *testing.T) {
-		tmp, gotHex, n, err := bufferAndHashSha1(bytes.NewReader(body), 0)
+		tmp, gotHex, n, err := bufferAndHashSha1("", bytes.NewReader(body), 0)
 		if err != nil {
 			t.Fatalf("bufferAndHashSha1 returned error: %v", err)
 		}
@@ -128,6 +129,18 @@ func TestBufferAndHashSha1(t *testing.T) {
 		}
 		if n != int64(len(body)) {
 			t.Errorf("written = %d, want %d", n, len(body))
+		}
+	})
+
+	t.Run("uses configured temp dir", func(t *testing.T) {
+		tempDir := filepath.Join(t.TempDir(), "upload-tmp")
+		tmp, _, _, err := bufferAndHashSha1(tempDir, bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			t.Fatalf("bufferAndHashSha1 returned error: %v", err)
+		}
+		defer cleanup(tmp)
+		if gotDir := filepath.Dir(tmp.Name()); gotDir != tempDir {
+			t.Fatalf("tmp dir = %q, want %q", gotDir, tempDir)
 		}
 	})
 }

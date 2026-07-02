@@ -27,11 +27,12 @@ CREATE TABLE IF NOT EXISTS videos (
     transcoded_file_id TEXT DEFAULT '',         -- 转码产物在同一 drive 上的 fileID，播放源优先用它
     transcoded_size  INTEGER DEFAULT 0,
     views            INTEGER DEFAULT 0,
+    last_viewed_at   INTEGER DEFAULT 0,
     favorites        INTEGER DEFAULT 0,
     comments         INTEGER DEFAULT 0,
     likes            INTEGER DEFAULT 0,
+    last_liked_at    INTEGER DEFAULT 0,
     dislikes         INTEGER DEFAULT 0,
-    category         TEXT,
     hidden           INTEGER DEFAULT 0,          -- 1 = hidden from public display
     tags_manual      INTEGER DEFAULT 0,          -- 1 = user explicitly curated tags
     badges           TEXT,                      -- JSON array
@@ -74,7 +75,7 @@ CREATE TABLE IF NOT EXISTS deleted_tags (
     deleted_at INTEGER NOT NULL
 );
 
--- 管理员显式删除过的视频。用于防止后续扫描 / spider91 爬虫把同一个源文件
+-- 管理员显式删除过的视频。用于防止后续扫描 / 爬虫把同一个源文件
 -- 再次入库；不代表原始云盘文件已被删除。
 CREATE TABLE IF NOT EXISTS deleted_videos (
     id           TEXT PRIMARY KEY,
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS deleted_videos (
     content_hash TEXT NOT NULL DEFAULT '',
     file_name    TEXT NOT NULL DEFAULT '',
     size_bytes   INTEGER NOT NULL DEFAULT 0,
+    reason       TEXT NOT NULL DEFAULT '',
     deleted_at   INTEGER NOT NULL
 );
 
@@ -114,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_crawler_seen_sources_drive
 -- 网盘账户
 CREATE TABLE IF NOT EXISTS drives (
     id            TEXT PRIMARY KEY,
-    kind          TEXT NOT NULL,                -- quark / p115 / p123 / pikpak / wopan / guangyapan / onedrive / googledrive / localstorage / spider91
+    kind          TEXT NOT NULL,                -- quark / p115 / p123 / pikpak / wopan / guangyapan / onedrive / googledrive / localstorage / scriptcrawler
     name          TEXT NOT NULL,
     root_id       TEXT NOT NULL DEFAULT '0',
     scan_root_id  TEXT,                          -- deprecated: 扫描起点固定等于 root_id
@@ -162,4 +164,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at INTEGER NOT NULL
+);
+
+-- 普通用户表
+CREATE TABLE IF NOT EXISTS users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password   TEXT NOT NULL,                    -- bcrypt 哈希
+    role       TEXT NOT NULL DEFAULT 'user',     -- admin / user
+    banned     INTEGER NOT NULL DEFAULT 0,       -- 1 = 被封禁
+    created_at INTEGER NOT NULL
 );

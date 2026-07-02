@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +152,16 @@ func TestInitUsesAccessTokenWithoutLogin(t *testing.T) {
 	})
 	if err := d.Init(context.Background()); err != nil {
 		t.Fatalf("Init() error = %v", err)
+	}
+}
+
+func TestDefaultAPIBaseMatchesCurrentWebAPIHost(t *testing.T) {
+	d := New(Config{ID: "123-main"})
+	if d.mainAPIBase != "https://api.123278.com/b/api" {
+		t.Fatalf("main api base = %q", d.mainAPIBase)
+	}
+	if d.loginAPIBase != "https://api.123278.com/b/api" {
+		t.Fatalf("login api base = %q", d.loginAPIBase)
 	}
 }
 
@@ -455,6 +467,29 @@ func TestUploadPresignedPUT429ReturnsRateLimitError(t *testing.T) {
 	}
 	if rateLimit.RetryAfter != 4*time.Second {
 		t.Fatalf("RetryAfter = %s, want 4s", rateLimit.RetryAfter)
+	}
+}
+
+func TestBufferAndHashMD5UsesConfiguredTempDir(t *testing.T) {
+	body := []byte("hello-123-upload-test")
+	tempDir := filepath.Join(t.TempDir(), "upload-tmp")
+	tmp, gotHex, n, err := bufferAndHashMD5(tempDir, bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		t.Fatalf("bufferAndHashMD5 returned error: %v", err)
+	}
+	defer func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+	}()
+	if gotDir := filepath.Dir(tmp.Name()); gotDir != tempDir {
+		t.Fatalf("tmp dir = %q, want %q", gotDir, tempDir)
+	}
+	want := md5.Sum(body)
+	if gotHex != fmt.Sprintf("%x", want) {
+		t.Fatalf("md5 = %s, want %x", gotHex, want)
+	}
+	if n != int64(len(body)) {
+		t.Fatalf("written = %d, want %d", n, len(body))
 	}
 }
 

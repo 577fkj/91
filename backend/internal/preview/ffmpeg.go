@@ -1114,6 +1114,19 @@ func (q *videoQueue) release(v *catalog.Video) {
 	q.mu.Unlock()
 }
 
+func (q *videoQueue) idsSnapshot() []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.ids) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(q.ids))
+	for id := range q.ids {
+		out = append(out, id)
+	}
+	return out
+}
+
 func (q *videoQueue) lengthExcluding(currentID string) int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -1239,6 +1252,13 @@ func (w *Worker) Status() TaskStatus {
 	}
 	currentID, _ := w.activity.current()
 	return taskStatus(&w.activity, &w.rateLimit, w.queue.lengthExcluding(currentID))
+}
+
+func (w *Worker) ActiveVideoIDs() []string {
+	if w == nil {
+		return nil
+	}
+	return w.queue.idsSnapshot()
 }
 
 func (w *ThumbWorker) Status() TaskStatus {
@@ -1569,11 +1589,6 @@ func (w *ThumbWorker) process(ctx context.Context, v *catalog.Video) bool {
 		return false
 	}
 	_ = w.Catalog.UpdateVideoMeta(ctx, v.ID, catalog.VideoMetaPatch{ThumbnailStatus: "pending"})
-	if isSpider91OriginVideo(v) {
-		log.Printf("[thumb] skip %s: spider91-origin video must use crawled thumbnail", v.Title)
-		_ = w.Catalog.UpdateVideoMeta(ctx, v.ID, catalog.VideoMetaPatch{ThumbnailStatus: "failed"})
-		return false
-	}
 	link, err := w.streamLink(ctx, v)
 	if err != nil {
 		if w.pauseForRecoverableError(ctx, v, err, "streamURL") {
@@ -1653,10 +1668,6 @@ func (w *ThumbWorker) generateThumbnailFromLink(ctx context.Context, v *catalog.
 	}
 	log.Printf("[thumb] ready %s", v.Title)
 	return nil
-}
-
-func isSpider91OriginVideo(v *catalog.Video) bool {
-	return v != nil && strings.HasPrefix(v.ID, "spider91-")
 }
 
 func localPreviewLink(v *catalog.Video) (*drives.StreamLink, bool) {

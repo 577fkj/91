@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ChevronRight,
   CircleStop,
-  Download,
   FolderTree,
   HardDrive,
   PlayCircle,
@@ -58,7 +57,6 @@ function isDriveBusy(d: api.AdminDrive) {
 export function DrivesPage() {
   const [list, setList] = useState<api.AdminDrive[]>([]);
   const [storage, setStorage] = useState<api.AdminDriveStorage | null>(null);
-  const [settings, setSettings] = useState<api.Settings | null>(null);
   const [nightlyStatus, setNightlyStatus] =
     useState<api.NightlyJobStatus>(idleNightlyStatus);
   const [loading, setLoading] = useState(true);
@@ -91,22 +89,7 @@ export function DrivesPage() {
   const nameError = nameTouched && nameMissing ? "请填写网盘名称" : "";
   const formDirty = form.id
     ? !sameForm(form, initialForm)
-    : hasCreateFormChanges(form, initialForm);
-
-  const uploadTargets = useMemo(
-    () =>
-      list.filter(
-        (d) =>
-          d.kind === "pikpak" ||
-          d.kind === "p115" ||
-          d.kind === "p123" ||
-          d.kind === "onedrive" ||
-          d.kind === "googledrive" ||
-          d.kind === "wopan" ||
-          d.kind === "guangyapan"
-      ),
-    [list]
-  );
+    : hasCreateFormChanges(form);
 
   function openDriveDetail(id: string) {
     setSearchParams((prev) => {
@@ -128,15 +111,13 @@ export function DrivesPage() {
     setLoading(true);
     setLoadError("");
     try {
-      const [data, storageData, settingsData, jobStatus] = await Promise.all([
+      const [data, storageData, jobStatus] = await Promise.all([
         api.listDrives(),
         api.getDriveStorage(),
-        api.getSettings().catch(() => null),
         api.getNightlyJobStatus().catch(() => null),
       ]);
       setList(data ?? []);
       setStorage(storageData);
-      if (settingsData) setSettings(settingsData);
       if (jobStatus) setNightlyStatus(jobStatus);
     } catch (e) {
       const message = e instanceof Error ? e.message : "加载失败";
@@ -197,10 +178,7 @@ export function DrivesPage() {
   }, [trackingNightly]);
 
   function openCreate() {
-    const nextForm = {
-      ...emptyForm,
-      spider91UploadDriveId: settings?.spider91UploadDriveId ?? "",
-    };
+    const nextForm = { ...emptyForm };
     setForm(nextForm);
     setInitialForm(nextForm);
     setNameTouched(false);
@@ -214,14 +192,14 @@ export function DrivesPage() {
       name: d.name,
       rootId: d.rootId,
       creds:
-        d.kind === "spider91"
-          ? { proxy: d.spider91Proxy ?? "" }
-          : d.kind === "googledrive"
-          ? { use_online_api: (d.googleDriveUseOnlineAPI ?? true) ? "true" : "false" }
+        d.kind === "googledrive"
+          ? {
+              use_online_api: (d.googleDriveUseOnlineAPI ?? true) ? "true" : "false",
+              api_url_address: d.googleDriveOpenListApiUrl ?? "",
+            }
           : d.kind === "localstorage"
           ? { strm_allow_outside_root: (d.strmAllowOutsideRoot ?? false) ? "true" : "false" }
           : {},
-      spider91UploadDriveId: settings?.spider91UploadDriveId ?? "",
     };
     setForm(nextForm);
     setInitialForm(nextForm);
@@ -247,7 +225,7 @@ export function DrivesPage() {
 
   function handleCreateFormChange(nextForm: FormState) {
     setForm(nextForm);
-    if (!nextForm.id && !hasCreateFormChanges(nextForm, initialForm)) {
+    if (!nextForm.id && !hasCreateFormChanges(nextForm)) {
       setInitialForm(nextForm);
     }
   }
@@ -275,26 +253,6 @@ export function DrivesPage() {
         rootId,
         credentials: form.creds,
       });
-
-      if (form.kind === "spider91" && form.spider91UploadDriveId !== (settings?.spider91UploadDriveId ?? "")) {
-        try {
-          const updated = await api.updateSettings({
-            spider91UploadDriveId: form.spider91UploadDriveId,
-          });
-          setSettings(updated);
-        } catch (settingsErr) {
-          show(
-            settingsErr instanceof Error
-              ? `Drive 已保存，但上传目标设置失败：${settingsErr.message}`
-              : "上传目标设置失败",
-            "error"
-          );
-          setModalOpen(false);
-          setInitialForm(form);
-          refresh();
-          return;
-        }
-      }
 
       if (resp.warning) {
         show(`已保存，但 driver 初始化失败：${resp.warning}`, "error");
@@ -331,10 +289,6 @@ export function DrivesPage() {
   }
 
   async function handleRescan(d: api.AdminDrive) {
-    if (d.kind === "spider91") {
-      show("91Spider 不再支持通过网盘运行，请到爬虫管理添加爬虫脚本", "info");
-      return;
-    }
     if (nightlyBusy) {
       show(nightlyBusyText(nightlyStatus) || NIGHTLY_BUSY_MESSAGE, "info");
       return;
@@ -564,7 +518,7 @@ export function DrivesPage() {
           </div>
           <div className="admin-drive-detail__header-right">
             <span className="admin-drive-detail__kind-chip">{kindLabel[d.kind] ?? d.kind}</span>
-            <StatusTag kind={d.kind} status={d.status} error={d.lastError} hasCred={d.hasCredential} />
+            <StatusTag status={d.status} error={d.lastError} hasCred={d.hasCredential} />
           </div>
         </header>
 
@@ -589,12 +543,6 @@ export function DrivesPage() {
                     <span className="admin-detail-value admin-mono-cell">{d.rootId}</span>
                   </div>
                 )}
-                {d.kind === "spider91" && (
-                  <div className="admin-detail-row">
-                    <span className="admin-detail-label">配置状态</span>
-                    <span className="admin-detail-value">已废弃，请到爬虫管理添加</span>
-                  </div>
-                )}
               </div>
               {d.lastError && (
                 <div className="admin-detail-error">{d.lastError}</div>
@@ -606,29 +554,17 @@ export function DrivesPage() {
                     type="button"
                     className="admin-btn is-primary"
                     onClick={() => handleRescan(d)}
-                    disabled={d.kind === "spider91"}
-                    aria-disabled={d.kind === "spider91" || nightlyBusy || isDriveBusy(d) || !!scanningDriveIds[d.id]}
+                    aria-disabled={nightlyBusy || isDriveBusy(d) || !!scanningDriveIds[d.id]}
                     title={
-                      d.kind === "spider91"
-                        ? "91Spider 不再支持通过网盘运行，请到爬虫管理添加爬虫脚本"
-                        : nightlyBusy
+                      nightlyBusy
                         ? nightlyBusyText(nightlyStatus) || NIGHTLY_BUSY_MESSAGE
                         : isDriveBusy(d) || scanningDriveIds[d.id]
                         ? DRIVE_BUSY_MESSAGE
                         : undefined
                     }
                   >
-                    {d.kind === "spider91" ? (
-                      <>
-                        <Download size={13} className={scanningDriveIds[d.id] ? "admin-spin" : undefined} />
-                        已废弃
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={13} className={scanningDriveIds[d.id] ? "admin-spin" : undefined} />
-                        {scanningDriveIds[d.id] ? "触发中..." : "立即重扫"}
-                      </>
-                    )}
+                    <RefreshCw size={13} className={scanningDriveIds[d.id] ? "admin-spin" : undefined} />
+                    {scanningDriveIds[d.id] ? "触发中..." : "立即重扫"}
                   </button>
                   <button
                     type="button"
@@ -641,30 +577,26 @@ export function DrivesPage() {
                     {stoppingDriveId === d.id ? "停止中..." : "停止所有任务"}
                   </button>
                 </div>
-                {d.kind !== "spider91" && (
-                  <button type="button" className="admin-btn is-primary" onClick={() => openEdit(d)}>
-                    编辑配置凭证
-                  </button>
-                )}
+                <button type="button" className="admin-btn is-primary" onClick={() => openEdit(d)}>
+                  编辑配置凭证
+                </button>
                 <button type="button" className="admin-btn is-danger admin-detail-actions__danger" onClick={() => setDeleteTarget(d)}>
                   <Trash2 size={13} /> 删除网盘
                 </button>
               </div>
             </div>
 
-            {d.kind !== "spider91" && (
-              <SkipDirsPanel
-                drive={d}
-                onSaved={(saved) => {
-                  setList((prev) =>
-                    prev.map((item) =>
-                      item.id === saved.id ? { ...item, skipDirIds: saved.skipDirIds } : item
-                    )
-                  );
-                  refreshDriveList();
-                }}
-              />
-            )}
+            <SkipDirsPanel
+              drive={d}
+              onSaved={(saved) => {
+                setList((prev) =>
+                  prev.map((item) =>
+                    item.id === saved.id ? { ...item, skipDirIds: saved.skipDirIds } : item
+                  )
+                );
+                refreshDriveList();
+              }}
+            />
           </div>
 
           <div>
@@ -732,7 +664,6 @@ export function DrivesPage() {
             form={form}
             onChange={setForm}
             isEdit={true}
-            uploadTargets={uploadTargets}
             nameError={nameError}
             onNameBlur={() => setNameTouched(true)}
           />
@@ -830,7 +761,7 @@ export function DrivesPage() {
                   </span>
                   <span>{d.name || d.id}</span>
                 </div>
-                <StatusTag kind={d.kind} status={d.status} error={d.lastError} hasCred={d.hasCredential} />
+                <StatusTag status={d.status} error={d.lastError} hasCred={d.hasCredential} />
               </div>
 
               <DriveCardMetrics d={d} />
@@ -870,7 +801,6 @@ export function DrivesPage() {
           form={form}
           onChange={handleCreateFormChange}
           isEdit={!!list.find((x) => x.id === form.id)}
-          uploadTargets={uploadTargets}
           nameError={nameError}
           onNameBlur={() => setNameTouched(true)}
           onBack={() => setNameTouched(false)}
@@ -907,7 +837,6 @@ function sameForm(a: FormState, b: FormState): boolean {
     a.kind === b.kind &&
     a.name === b.name &&
     a.rootId === b.rootId &&
-    a.spider91UploadDriveId === b.spider91UploadDriveId &&
     sameRecord(a.creds, b.creds)
   );
 }
@@ -920,9 +849,8 @@ function sameRecord(a: Record<string, string>, b: Record<string, string>): boole
   return true;
 }
 
-function hasCreateFormChanges(form: FormState, initial: FormState): boolean {
+function hasCreateFormChanges(form: FormState): boolean {
   if (form.name.trim() !== "") return true;
   if (form.rootId.trim() !== "") return true;
-  if (form.spider91UploadDriveId !== initial.spider91UploadDriveId) return true;
   return Object.values(form.creds).some((value) => value.trim() !== "");
 }

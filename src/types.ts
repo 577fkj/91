@@ -19,7 +19,6 @@ export type VideoItem = {
   publishedAt: string;
   rating?: number;
   tags?: string[];
-  category?: string;
 };
 
 export type AuthorProfile = {
@@ -55,9 +54,19 @@ export type VideoDetail = VideoItem & {
   commentsList: CommentItem[];
 };
 
+export type VideoSubtitle = {
+  name: string;
+  label: string;
+  language?: string;
+  ext: string;
+  type: "vtt" | "srt" | "ass";
+  url: string;
+  source: string;
+};
+
 export type PreviewState = "idle" | "intent" | "loading" | "playing" | "error";
 
-export type SortKey = "latest" | "hot" | "week" | "long" | "hd" | "featured";
+export type SortKey = "latest" | "hot" | "recent";
 
 export type TagItem = {
   id: string;
@@ -65,15 +74,9 @@ export type TagItem = {
   count?: number;
 };
 
-export type CategoryItem = {
-  id: string;
-  label: string;
-  href: string;
-};
-
 export type PromoItem = {
   id: string;
-  kind: "channel" | "collection" | "event";
+  kind: "channel" | "topic" | "event";
   label: string;
   title: string;
   meta?: string;
